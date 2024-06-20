@@ -3,13 +3,14 @@ import matplotlib.pyplot as plt
 import scipy.interpolate as interpolate
 from scipy.integrate import solve_ivp
 from consts_defaults import *
+import wind_limits as wl
 import copy
 
 """
 mdot_tacc
 Given a BHL accretion rate and star-disc accretion time-scale, self-consistently solve the disc evolution
 """
-def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, plot=False, mu=-.5, sigma=1.0 , fM=0.0, fM_disp = 0.0, G=Gcgs):
+def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot=False, mu=-.5, sigma=1.0 , fM=0.0, fM_disp = 0.0, G=Gcgs):
 
 	# Apply convolution
 	mdot_star = np.zeros((len(dts), len(Mdot_BHL), len(teval_)))
@@ -17,6 +18,9 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, plot=False, mu=-.5, s
 	frac_tend = np.zeros(mdot_star.shape)
 	disc_radius = np.zeros(mdot_star.shape)
 	disc_vturb = np.zeros(mdot_star.shape)
+	rho_amb = np.zeros(mdot_star.shape)
+	v_amb = np.zeros(mdot_star.shape)
+	mdot_BHL = np.zeros(mdot_star.shape)
 
 	if plot:
 		fig, ax = plt.subplots(figsize=(5.,4.))
@@ -29,8 +33,13 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, plot=False, mu=-.5, s
 				dt = Myr2s*10.**np.random.uniform(mu-sigma, mu+sigma)
 			
 			tmp_data =copy.copy(Mdot_BHL[istar])
+			
+			rho_func = interpolate.interp1d(tarr_[istar], rho_BHL[istar])
 			BHL_func = interpolate.interp1d(tarr_[istar], tmp_data)
+			
+			
 			RBHL_func = interpolate.interp1d(tarr_[istar], R_BHL[istar])
+			
 
 			Rdisc = 250.0*(mstars[istar]/Msol2g)*au2cm
 			
@@ -75,6 +84,12 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, plot=False, mu=-.5, s
 
 			disc_radius[ikern][istar] = RBHL_func(teval_[0])
 			disc_vturb[ikern][istar] = vt
+			
+			
+			
+			
+			rho_amb[ikern][istar] = np.interpolate(teval_, tarr_[istar], rho_BHL[istar])
+			v_amb[ikern][istar] = np.interpolate(teval_, tarr_[istar], dv_BHL[istar])
 
 			iacc = np.where(BHL_func(teval_)>mdot_star[ikern][istar])[0]
 			for ir in iacc:
@@ -149,4 +164,4 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, plot=False, mu=-.5, s
 
 
 
-	return disc_mass, mdot_star, frac_tend, disc_radius, disc_vturb
+	return disc_mass, mdot_star, frac_tend, disc_radius, disc_vturb, mdot_BHL, rho_amb, v_amb 

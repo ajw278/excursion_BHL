@@ -20,20 +20,17 @@ cs_ = 0.2
 #Frequency of solar neighbourhood in Myr-1
 Omega_ = 2.6e-2 
 
-
+#Velocity dispersion at the scale height 
 sigvh_ = 6.0
 
 #Scale height galactic disc in pc
 h_ = (sigvh_*1e5*Myr2s/Omega_)/pc2cm
 
-
 #Local average (midplane) density in units of Msol/pc2
 rho0_ = 6./h_
 
-
 #Surface density of solar neighbourhood in Msol/pc2
 Sigma0_ = 2.*rho0_*h_
-
 
 #Lower disc mass limit (dispersal criterion)
 mllim = 3e-5
