@@ -882,11 +882,12 @@ class sfr_database():
 			rhoplt = []
 			mstar_plt = []
 			tplt = np.array(getattr(self, 'tdiscevol'+tag))/Myr2s
-			for irand in enumerate(irands):
-				mstar_plt.append(np.array(getattr(self, 'mstevol'+tag))/Msol2g)
-				vplt.append(getattr(self, 'dvBHLevol'+tag)[idt])
-				Mdplt.append(getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g)
-				rhoplt.append(getattr(self, 'rhoBHLevol'+tag)[idt])
+			for irand in irands:
+				mstar_plt.append(np.array(getattr(self, 'mstevol'+tag)[irand])/Msol2g)
+				vplt.append(getattr(self, 'dvBHLevol'+tag)[idt][irand])
+				Mdplt.append(getattr(self, 'mdotBHLevol'+tag)[idt][irand]*year2s/Msol2g)
+				rhoplt.append(getattr(self, 'rhoBHLevol'+tag)[idt][irand])
+			
 				
 			mstar_plt = np.array(mstar_plt).flatten()
 			cmap = plt.cm.viridis  # Choose a colormap
