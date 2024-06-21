@@ -875,7 +875,7 @@ class sfr_database():
 					self.tags.append(tag)
 			
 				
-			nsamp_tot = len(getattr(self, 'mdisc_evol'+tag)[idt])
+			nsamp_tot = len(getattr(self, 'mstevol'+tag)[idt])
 			irands = np.random.choice(np.arange(nsamp_tot), size=Nsample)
 			tplt = []
 			Mdplt = []
