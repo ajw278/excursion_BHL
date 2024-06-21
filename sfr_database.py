@@ -862,7 +862,7 @@ class sfr_database():
 			
 			return None
 			
-		def plot_accretion_rates_wevap(self, Nsample=8, ages=[0.0, 0.5, 1.0, 2.0, 4.0, 8.0],idt=0, mlim =250.0, ptag='', minit=0.0):
+		def plot_accretion_rates_wevap(self, Nsample=8, ages=[0.0, 0.5, 1.0, 2.0, 4.0, 8.0],idt=0, mlim =250.0, ptag='', minitdisp=1.0, minit=0.0):
 			
 			tag = ptag
 			if minit>0.0:
@@ -875,16 +875,15 @@ class sfr_database():
 					self.tags.append(tag)
 			
 				
-			nsamp_tot = len(getattr(self, 'mstevol'+tag)[idt])
+			nsamp_tot = len(getattr(self, 'mstevol'+tag))
 			irands = np.random.choice(np.arange(nsamp_tot), size=Nsample)
-			tplt = []
 			Mdplt = []
 			vplt = []
 			rhoplt = []
 			mstar_plt = []
 			tplt = getattr(self, 'tdiscevol'+tag)
 			for irand in enumerate(irands):
-				mstar_plt.append(getattr(self, 'mstevol'+tag)[idt]/Msol2g)
+				mstar_plt.append(getattr(self, 'mstevol'+tag)/Msol2g)
 				vplt.append(getattr(self, 'dvBHLevol'+tag)[idt])
 				Mdplt.append(getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g)
 				rhoplt.append(getattr(self, 'rhoBHLevol'+tag)[idt])
@@ -940,7 +939,7 @@ class sfr_database():
 
 			print("EDITING HERE")
 			Mda =  getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g #np.zeros((len(iregs_avg), len(trange)))
-			msta = getattr(self, 'mstevol'+tag)[idt]/Msol2g
+			msta = getattr(self, 'mstevol'+tag)/Msol2g
 			Mda /= msta**2
 
 			
