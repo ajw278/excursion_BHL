@@ -16,7 +16,7 @@ if __name__=='__main__':
 	print('Tag:', tag)
 
 	#Plot the BHL accretion rate histories
-	sfdb.plot_accretion_rates_wevap()
+	sfdb.plot_accretion_rates_wevap(ptag='m250_', minit=0.0)
 
 	#Plot the BHL accretion rate histories
 	#sfdb.plot_accretion_rates()
