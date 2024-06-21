@@ -12,16 +12,17 @@ if __name__=='__main__':
 
 
 	#For a representative sample of 500 stars, calculate the disc evolution
-	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_')
+	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_', wind=True)
 	print('Tag:', tag)
 
 	#Plot the BHL accretion rate histories
-	sfdb.plot_accretion_rates_wevap(ptag='m250_', minit=0.0)
+	sfdb.plot_accretion_rates_wevap(tag=tag)
 
 	#Plot the BHL accretion rate histories
 	#sfdb.plot_accretion_rates()
 
 	#Make the plots for the paper
+	sfdb.plot_discfrac(tag=tag)
 	sfdb.plot_all(tag=tag)
 	sfdb.plot_rplf(tag=tag)
 	sfdb.plot_vturb(tag=tag)
@@ -29,8 +30,9 @@ if __name__=='__main__':
 
 
 	#Test results for a substantial initial disc mass
-	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.01, minitdisp=1.0, ptag='m250_')
+	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.01, minitdisp=1.0, ptag='m250_', wind=True)
 
+	sfdb.plot_accretion_rates_wevap(tag=tag)
 	sfdb.plot_all(tag=tag)
 	sfdb.plot_rplf(tag=tag)
 

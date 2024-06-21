@@ -585,7 +585,7 @@ class sfr_database():
 
 
 
-		def calc_discevol(self, redraw=True, Nsample=1, maxtres=20000, minit=0.0, minitdisp=0.0, mlim=250., ptag=''):
+		def calc_discevol(self, redraw=True, Nsample=1, maxtres=20000, minit=0.0, minitdisp=0.0, mlim=250., ptag='', wind=False):
 
 			tag = ptag
 			if minit>0.0:
@@ -596,10 +596,13 @@ class sfr_database():
 					tag += '_mdisp_%.2lf'%minitdisp
 				if not tag in self.tags:
 					self.tags.append(tag)
+			if wind:
+				tag += '_wind'
 			if not hasattr(self, 'idiscevol'+tag) or redraw:
 				setattr(self, 'idiscevol'+tag, self.draw_representative_sample(Nsample, mreglim=mlim))
 
-
+			setattr(self, 'wind'+tag, wind)
+			
 			if not hasattr(self, 'mdiscevol'+tag) or redraw:
 				print( hasattr(self, 'mdiscevol'+tag), redraw)
 				ta = []
@@ -636,8 +639,8 @@ class sfr_database():
 				setattr(self, 'tdiscevol'+tag, teval_)
 				
 				print('Running disc evolution calculation...')
-
-				disc_mass, mdot_star, frac_tend, disc_radius, disc_vt, mdot_BHL, rho_BHL, dv_BHL = de.mdot_tacc(Mda, Ra, teval_, ta, dt_, mst, drhoa, dva, plot=False, mu=-.5, fM=minit, fM_disp=minitdisp,sigma=1.0)
+				wind = getattr(self, 'wind'+tag)
+				disc_mass, mdot_star, frac_tend, disc_radius, disc_vt, mdot_BHL, rho_BHL, dv_BHL = de.mdot_tacc(Mda, Ra, teval_, ta, dt_, mst, drhoa, dva, plot=False, mu=-.5, fM=minit, fM_disp=minitdisp,sigma=1.0, wind=wind)
 					
 				
 				setattr(self, 'mdiscevol'+tag, disc_mass)
@@ -862,18 +865,7 @@ class sfr_database():
 			
 			return None
 			
-		def plot_accretion_rates_wevap(self, Nsample=8, ages=[0.0, 0.5, 1.0, 2.0, 4.0, 8.0],idt=0, mlim =250.0, ptag='', minitdisp=1.0, minit=0.0):
-			
-			tag = ptag
-			if minit>0.0:
-				if not hasattr(self, 'tags'):
-					self.tags  = [] 
-				tag += '_minit_%.2lf'%minit
-				if minitdisp>0.0:
-					tag += '_mdisp_%.2lf'%minitdisp
-				if not tag in self.tags:
-					self.tags.append(tag)
-			
+		def plot_accretion_rates_wevap(self, Nsample=8, idt=0,  tag=''):
 				
 			nsamp_tot = len(getattr(self, 'mstevol'+tag))
 			irands = np.random.choice(np.arange(nsamp_tot), size=Nsample)
@@ -908,9 +900,6 @@ class sfr_database():
 			for i in range(Nsample):
 				axs[1].plot(tplt, rhoplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
 
-
-			arrow_height = 0.5  # Height of the arrow in data coordinates
-			arrow_length = 0.3
 			Thigh_dense = {'L1495': [2616, 31.7], 'B213': [1095,13.7], 'L1521': [1584, 17.6], "HCl2" : [1513,  15.8], 'L1498': [373, 5.7],  'L1506': [491, 7.7]}
 			ireg = 0
 			for Treg in Thigh_dense:
@@ -918,7 +907,6 @@ class sfr_database():
 				atmp = Thigh_dense[Treg][1]
 				rhotmp = Mtmp/(4.*np.pi*0.333*(atmp/np.pi)**1.5)
 				rhotmp *= Msol2g*(1./pc2cm)**3
-				print(rhotmp)
 				axs[1].axhline(rhotmp, color=CB_color_cycle[ireg], linewidth=1, linestyle='dotted')
 				x0 = 1.0
 				dx = 1.1
@@ -938,7 +926,6 @@ class sfr_database():
 			for i in range(Nsample):
 				axs[2].plot(tplt, Mdplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
 
-			print("EDITING HERE")
 			Mda =  getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g #np.zeros((len(iregs_avg), len(trange)))
 			msta = np.array(getattr(self, 'mstevol'+tag))/Msol2g
 			Mda /= msta[:, np.newaxis]**2
@@ -988,7 +975,7 @@ class sfr_database():
 			#plt.tight_layout()
 			plt.show()
 		
-		def plot_accretion_rates(self, Nsample=8, ages=[0.0, 0.5, 1.0, 2.0, 4.0, 8.0], mlim =250.0):
+		def plot_accretion_rates(self, Nsample=8, mlim =250.0):
 			iregs, ists = self.draw_representative_sample(Nsample, mreglim=mlim).T[:]
 
 			tplt = []

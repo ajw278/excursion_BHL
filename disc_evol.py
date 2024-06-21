@@ -10,7 +10,7 @@ import copy
 mdot_tacc
 Given a BHL accretion rate and star-disc accretion time-scale, self-consistently solve the disc evolution
 """
-def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot=False, mu=-.5, sigma=1.0 , fM=0.0, fM_disp = 0.0, G=Gcgs):
+def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot=False, mu=-.5, sigma=1.0 , fM=0.0, fM_disp = 0.0, G=Gcgs, wind=False):
 
 	# Apply convolution
 	mdot_star = np.zeros((len(dts), len(Mdot_BHL), len(teval_)))
@@ -46,37 +46,50 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 
 			Rdisc = 250.0*(mstars[istar]/Msol2g)*au2cm
 			
-			def mmdotEt_func(t, y):
+			if wind:
+				def mmdotEt_func(t, y):
 
-				#print(t/Myr2s)
-				MdBHL = BHL_func(t)
-				
-				Mdot_Msoly = y[0]*year2s/dt/Msol2g
-				Rwind = wl.interpolate_Rwind(mstars[istar]/Msol2g, t/Myr2s, Mdot_Msoly, rho0=rho_func(t), Rwind_interpolator=Rwinterp)
-				RBHL = RBHL_func(t)
-				
-				#
-				"""if Rwind>RBHL:
-					print(Mdot_Msoly, mstars[istar]/Msol2g, rho_func(t), Rwind/au2cm, RBHL/au2cm)
-					MdBHL *= 1e-4
-					print('Suppress!', MdBHL*year2s/Msol2g)
+					#print(t/Myr2s)
+					MdBHL = BHL_func(t)
 					
-					Rwind = wl.interpolate_Rwind(mstars[istar]/Msol2g, t/Myr2s, Mdot_Msoly, rho0=rho_func(t), Rwind_interpolator=Rwinterp, debug=True)
-					print(Rwind)
-					exit()"""
-				mdot = -y[0]/dt + MdBHL
-				vin2 = 2*G*mstars[istar]/Rdisc
+					Mdot_Msoly = y[0]*year2s/dt/Msol2g
+					Rwind = wl.interpolate_Rwind(mstars[istar]/Msol2g, t/Myr2s, Mdot_Msoly, rho0=rho_func(t), Rwind_interpolator=Rwinterp)
+					RBHL = RBHL_func(t)
+					if Rwind>RBHL:
+						MdBHL *= 1e-5
+						
+					mdot = -y[0]/dt + MdBHL
+					vin2 = 2*G*mstars[istar]/Rdisc
 
-				vt_ = np.sqrt(2.*y[1]/(y[0]+1e-60)+1e-30)
-				dt_e = 0.1*Rdisc/(vt_+1e-60)
+					vt_ = np.sqrt(2.*y[1]/(y[0]+1e-60)+1e-30)
+					dt_e = 0.1*Rdisc/(vt_+1e-60)
 
-				Ein  =  0.5*MdBHL*vin2
-				Eout =  y[1]/dt_e
-				Eacc = 0.5*y[0]*vt_*vt_/dt
-				Edot = Ein-Eout-Eacc
-				#if mdot>0.0 and y[0]>minit:
-				#	mdot = mdot*np.exp(1.0)*np.exp(-(y[0]/ulim)**2)
-				return mdot, Edot
+					Ein  =  0.5*MdBHL*vin2
+					Eout =  y[1]/dt_e
+					Eacc = 0.5*y[0]*vt_*vt_/dt
+					Edot = Ein-Eout-Eacc
+					#if mdot>0.0 and y[0]>minit:
+					#	mdot = mdot*np.exp(1.0)*np.exp(-(y[0]/ulim)**2)
+					return mdot, Edot
+			else:
+				def mmdotEt_func(t, y):
+
+					#print(t/Myr2s)
+					MdBHL = BHL_func(t)
+						
+					mdot = -y[0]/dt + MdBHL
+					vin2 = 2*G*mstars[istar]/Rdisc
+
+					vt_ = np.sqrt(2.*y[1]/(y[0]+1e-60)+1e-30)
+					dt_e = 0.1*Rdisc/(vt_+1e-60)
+
+					Ein  =  0.5*MdBHL*vin2
+					Eout =  y[1]/dt_e
+					Eacc = 0.5*y[0]*vt_*vt_/dt
+					Edot = Ein-Eout-Eacc
+					#if mdot>0.0 and y[0]>minit:
+					#	mdot = mdot*np.exp(1.0)*np.exp(-(y[0]/ulim)**2)
+					return mdot, Edot
 			
 			m0 = fM*Msol2g*((mstars[istar]/Msol2g)**2)
 			if m0>0.0:
