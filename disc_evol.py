@@ -21,6 +21,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 	rho_amb = np.zeros(mdot_star.shape)
 	v_amb = np.zeros(mdot_star.shape)
 	mdot_BHL = np.zeros(mdot_star.shape)
+	
 
 	if plot:
 		fig, ax = plt.subplots(figsize=(5.,4.))
@@ -28,6 +29,8 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 		dt= dt_
 		# Calculate the Gaussian kernel for each element in data
 		for istar in range(len(Mdot_BHL)):
+			Rwinterp = wl.get_Rwind_interpolator(mstars[istar]/Msol2g)
+			
 			if dt_=='ln':
 				#dt = 10.**np.random.normal(loc=mu, scale=sigma)
 				dt = Myr2s*10.**np.random.uniform(mu-sigma, mu+sigma)
@@ -45,13 +48,26 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 			
 			def mmdotEt_func(t, y):
 
+				#print(t/Myr2s)
 				MdBHL = BHL_func(t)
-
-
+				
+				Mdot_Msoly = y[0]*year2s/dt/Msol2g
+				Rwind = wl.interpolate_Rwind(mstars[istar]/Msol2g, t/Myr2s, Mdot_Msoly, rho0=rho_func(t), Rwind_interpolator=Rwinterp)
+				RBHL = RBHL_func(t)
+				
+				#
+				"""if Rwind>RBHL:
+					print(Mdot_Msoly, mstars[istar]/Msol2g, rho_func(t), Rwind/au2cm, RBHL/au2cm)
+					MdBHL *= 1e-4
+					print('Suppress!', MdBHL*year2s/Msol2g)
+					
+					Rwind = wl.interpolate_Rwind(mstars[istar]/Msol2g, t/Myr2s, Mdot_Msoly, rho0=rho_func(t), Rwind_interpolator=Rwinterp, debug=True)
+					print(Rwind)
+					exit()"""
 				mdot = -y[0]/dt + MdBHL
 				vin2 = 2*G*mstars[istar]/Rdisc
 
-				vt_ = np.sqrt(2.*y[1]/(y[0]+1e-60))
+				vt_ = np.sqrt(2.*y[1]/(y[0]+1e-60)+1e-30)
 				dt_e = 0.1*Rdisc/(vt_+1e-60)
 
 				Ein  =  0.5*MdBHL*vin2
@@ -65,7 +81,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 			m0 = fM*Msol2g*((mstars[istar]/Msol2g)**2)
 			if m0>0.0:
 				m0 = 10.**(np.log10(m0)+ np.random.normal(loc=0.0, scale=fM_disp))
-			sol = solve_ivp(mmdotEt_func, (teval_[0], teval_[-1]), [m0, 0.0], method='LSODA', t_eval=teval_, rtol=1e-11, atol=1e-11)
+			sol = solve_ivp(mmdotEt_func, (teval_[0], teval_[-1]), [m0, 0.0], method='LSODA', t_eval=teval_, rtol=1e-10, atol=1e-10)
 			mdisc = sol.y[0].flatten()
 			Edisc = sol.y[1].flatten()
 
@@ -75,9 +91,27 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 				#plt.plot(tarr_, kernel[npad:-npad], c=CB_color_cycle[ikern], linestyle='dotted', linewidth=1, label='Kernel')
 				plt.plot(sol.t.flatten()/Myr2s, mdisc/Msol2g, c=CB_color_cycle[ikern], linestyle='solid', linewidth=1, label='$\\tau_\mathrm{acc}=%.1lf$ Myr'%(dt/Myr2s))
 			
+			
+			
 			#Assuming constant time intervals between steps! 
 			ihalf = np.arange(len(teval_))//2
 			sd = mdisc/dt
+			
+			
+			Rwind_arr = wl.interpolate_Rwind(mstars[istar]/Msol2g, teval_/Myr2s, sd*year2s/Msol2g, rho0=rho_func(teval_), Rwind_interpolator=Rwinterp)
+			RBHL_eval = RBHL_func(teval_[0])
+			BHL_eval = BHL_func(teval_)
+			BHL_eval[Rwind_arr>RBHL_eval] = 0.0
+			mdot_BHL[ikern][istar] = BHL_eval
+			
+			print('Stellar mass:', mstars[istar]/Msol2g)
+			"""plt.plot(teval_/Myr2s, mdot_BHL[ikern][istar]*year2s/Msol2g)
+			plt.plot(teval_/Myr2s, BHL_func(teval_)*year2s/Msol2g)
+			plt.plot(teval_/Myr2s, Rwind_arr/RBHL_eval, label='Rrat')
+			plt.yscale('log')
+			plt.legend(loc='best')
+			plt.show()"""
+			
 			disc_mass[ikern][istar] = mdisc
 			mdot_star[ikern][istar] = sd
 			frac_tend[ikern][istar] = 1.-mdisc[ihalf]*np.exp(-(teval_-teval_[ihalf])/dt)/(mdisc+1e-30)
@@ -88,8 +122,8 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 			
 			
 			
-			rho_amb[ikern][istar] = np.interpolate(teval_, tarr_[istar], rho_BHL[istar])
-			v_amb[ikern][istar] = np.interpolate(teval_, tarr_[istar], dv_BHL[istar])
+			rho_amb[ikern][istar] = np.interp(teval_, tarr_[istar], rho_BHL[istar])
+			v_amb[ikern][istar] = np.interp(teval_, tarr_[istar], dv_BHL[istar])
 
 			iacc = np.where(BHL_func(teval_)>mdot_star[ikern][istar])[0]
 			for ir in iacc:
