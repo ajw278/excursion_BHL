@@ -11,7 +11,7 @@ if __name__=='__main__':
 	sfdb = excursion.get_density_history(Nregions=300, Nstars=5000)
 
 
-	wl.construct_grid()
+	#wl.construct_grid()
 
 	#For a representative sample of 500 stars, calculate the disc evolution
 	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_', wind=True)
