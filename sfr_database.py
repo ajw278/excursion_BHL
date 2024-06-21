@@ -862,7 +862,7 @@ class sfr_database():
 			
 			return None
 			
-		def plot_accretion_rates_wevap(self, Nsample=8, ages=[0.0, 0.5, 1.0, 2.0, 4.0, 8.0],idt=0, mlim =250.0, ptag=''):
+		def plot_accretion_rates_wevap(self, Nsample=8, ages=[0.0, 0.5, 1.0, 2.0, 4.0, 8.0],idt=0, mlim =250.0, ptag='', minit=0.0):
 			
 			tag = ptag
 			if minit>0.0:
