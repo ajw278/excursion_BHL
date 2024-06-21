@@ -881,9 +881,9 @@ class sfr_database():
 			vplt = []
 			rhoplt = []
 			mstar_plt = []
-			tplt = getattr(self, 'tdiscevol'+tag)
+			tplt = np.array(getattr(self, 'tdiscevol'+tag))/Myr2s
 			for irand in enumerate(irands):
-				mstar_plt.append(getattr(self, 'mstevol'+tag)/Msol2g)
+				mstar_plt.append(np.array(getattr(self, 'mstevol'+tag))/Msol2g)
 				vplt.append(getattr(self, 'dvBHLevol'+tag)[idt])
 				Mdplt.append(getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g)
 				rhoplt.append(getattr(self, 'rhoBHLevol'+tag)[idt])
@@ -939,7 +939,7 @@ class sfr_database():
 
 			print("EDITING HERE")
 			Mda =  getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g #np.zeros((len(iregs_avg), len(trange)))
-			msta = getattr(self, 'mstevol'+tag)/Msol2g
+			msta = np.array(getattr(self, 'mstevol'+tag))/Msol2g
 			Mda /= msta**2
 
 			
