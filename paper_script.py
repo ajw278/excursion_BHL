@@ -1,5 +1,5 @@
 import excursion
-		
+import wind_limits as wl	
 
 
 if __name__=='__main__':
@@ -10,6 +10,8 @@ if __name__=='__main__':
 	#Genererate density histories for at least 10000 stars in at least 500 different regions
 	sfdb = excursion.get_density_history(Nregions=300, Nstars=5000)
 
+
+	wl.construct_grid()
 
 	#For a representative sample of 500 stars, calculate the disc evolution
 	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_', wind=True)
