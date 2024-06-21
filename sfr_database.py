@@ -943,6 +943,7 @@ class sfr_database():
 			msta = np.array(getattr(self, 'mstevol'+tag))/Msol2g
 			Mda /= msta[:, np.newaxis]**2
 
+			tgrd = tplt[:, np.newaxis]*np.ones(Mda.shape)
 			
 			Mda_med = np.median(Mda, axis=0)
 			Mda_mean = np.mean(Mda, axis=0)
@@ -950,7 +951,7 @@ class sfr_database():
 			binsx = np.linspace(0.0, 8.0, 25)
 			axs[2].plot(tplt, Mda_med, color='r', linewidth=1, linestyle='solid', label='Median')
 			axs[2].plot(tplt, Mda_mean, color='r', linewidth=1, linestyle='dashed', label='Mean')
-			axs[2].hist2d(tplt.flatten(), Mda.flatten(), bins=(binsx, binsy), cmap='gray_r')
+			axs[2].hist2d(tgrd.flatten(), Mda.flatten(), bins=(binsx, binsy), cmap='gray_r')
 
 			axs[2].set_ylabel('Norm. BHL acc.: $\dot{M}_\mathrm{BHL} \\cdot \left(\\frac{m_*}{1\, M_\odot}\\right)^{-2}$ [$M_\odot$ yr$^{-1}$]')
 			axs[2].set_yscale('log')
