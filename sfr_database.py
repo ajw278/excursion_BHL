@@ -887,8 +887,8 @@ class sfr_database():
 				vplt.append(getattr(self, 'dvBHLevol'+tag)[idt][irand])
 				Mdplt.append(getattr(self, 'mdotBHLevol'+tag)[idt][irand]*year2s/Msol2g)
 				rhoplt.append(getattr(self, 'rhoBHLevol'+tag)[idt][irand])
-			
-				
+
+
 			mstar_plt = np.array(mstar_plt).flatten()
 			cmap = plt.cm.viridis  # Choose a colormap
 			normalize = plt.Normalize(vmin=np.min(np.log10(mstar_plt)), vmax=np.max(np.log10(mstar_plt)))  # Normalize stellar mass for colormap
@@ -941,7 +941,7 @@ class sfr_database():
 			print("EDITING HERE")
 			Mda =  getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g #np.zeros((len(iregs_avg), len(trange)))
 			msta = np.array(getattr(self, 'mstevol'+tag))/Msol2g
-			Mda /= msta**2
+			Mda /= msta[:, np.newaxis]**2
 
 			
 			Mda_med = np.median(Mda, axis=0)
