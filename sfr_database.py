@@ -943,7 +943,7 @@ class sfr_database():
 			msta = np.array(getattr(self, 'mstevol'+tag))/Msol2g
 			Mda /= msta[:, np.newaxis]**2
 
-			tgrd = tplt[:, np.newaxis]*np.ones(Mda.shape)
+			tgrd = tplt[np.newaxis,:]*np.ones(Mda.shape)
 			
 			Mda_med = np.median(Mda, axis=0)
 			Mda_mean = np.mean(Mda, axis=0)
