@@ -878,11 +878,11 @@ class sfr_database():
 			nsamp_tot = len(getattr(self, 'mdisc_evol'+tag)[idt])
 			irands = np.random.choice(np.arange(nsamp_tot), size=Nsample)
 			tplt = []
-			Raplt = []
 			Mdplt = []
 			vplt = []
 			rhoplt = []
 			mstar_plt = []
+			tplt = getattr(self, 'tdiscevol'+tag)
 			for irand in enumerate(irands):
 				mstar_plt.append(getattr(self, 'mstevol'+tag)[idt]/Msol2g)
 				vplt.append(getattr(self, 'dvBHLevol'+tag)[idt])
@@ -898,7 +898,7 @@ class sfr_database():
 
 			# Plot relative velocity, density, and accretion rate over time
 			for i in range(Nsample):
-				axs[0].plot(tplt[i], vplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
+				axs[0].plot(tplt, vplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
 			
 			axs[0].set_yscale('log')
 			axs[0].set_ylabel('Relative velocity: $\\Delta v_\mathrm{gas}$ [km s$^{-1}$]')
@@ -906,7 +906,7 @@ class sfr_database():
 
 
 			for i in range(Nsample):
-				axs[1].plot(tplt[i], rhoplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
+				axs[1].plot(tplt, rhoplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
 
 
 			arrow_height = 0.5  # Height of the arrow in data coordinates
@@ -936,26 +936,21 @@ class sfr_database():
 			axs[1].tick_params(which='both', axis='both', direction='inout', right=True, left=True, top=True, bottom=True)
 			#axs[1].legend(loc='best')
 			for i in range(Nsample):
-				axs[2].plot(tplt[i], Mdplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
+				axs[2].plot(tplt, Mdplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
 
 			print("EDITING HERE")
-			trange = np.linspace(0.0, 8.0, 500)
-			Mda = np.zeros((len(iregs_avg), len(trange)))
-			for iplt, ireg in enumerate(iregs_avg):
-				ist = ists_avg[iplt]
-				Mda_tmp = getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g
-				t_tmp = self.region_list[ireg]['t_evols'][ist]/Myr2s
-				mst_tmp = self.region_list[ireg]['msts'][ist]/Msol2g
-				Mda[iplt] = np.interp(trange, t_tmp, Mda_tmp/mst_tmp/mst_tmp)
+			Mda =  getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g #np.zeros((len(iregs_avg), len(trange)))
+			msta = getattr(self, 'mstevol'+tag)[idt]/Msol2g
+			Mda /= msta**2
 
+			
 			Mda_med = np.median(Mda, axis=0)
 			Mda_mean = np.mean(Mda, axis=0)
 			binsy = np.logspace(np.log10(3e-14), np.log10(5e-6), 20)
-			binsx = np.linspace(trange[0], trange[-1], 25)
-			tgrid = trange[np.newaxis, :]*np.ones(Mda.shape)
-			axs[2].plot(trange, Mda_med, color='r', linewidth=1, linestyle='solid', label='Median')
-			axs[2].plot(trange, Mda_mean, color='r', linewidth=1, linestyle='dashed', label='Mean')
-			axs[2].hist2d(tgrid.flatten(), Mda.flatten(), bins=(binsx, binsy), cmap='gray_r')
+			binsx = np.linspace(0.0, 8.0, 25)
+			axs[2].plot(tplt, Mda_med, color='r', linewidth=1, linestyle='solid', label='Median')
+			axs[2].plot(tplt, Mda_mean, color='r', linewidth=1, linestyle='dashed', label='Mean')
+			axs[2].hist2d(tplt.flatten(), Mda.flatten(), bins=(binsx, binsy), cmap='gray_r')
 
 			axs[2].set_ylabel('Norm. BHL acc.: $\dot{M}_\mathrm{BHL} \\cdot \left(\\frac{m_*}{1\, M_\odot}\\right)^{-2}$ [$M_\odot$ yr$^{-1}$]')
 			axs[2].set_yscale('log')
