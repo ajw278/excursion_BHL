@@ -606,6 +606,9 @@ class sfr_database():
 				Mda = []
 				Ra = []
 				mst = []
+				dva = []
+				drhoa= []
+				
 
 				tmax_min = np.inf
 				
@@ -615,6 +618,8 @@ class sfr_database():
 					Ra.append(self.region_list[id[0]]['R_accs'][id[1]])
 					Mda.append(self.region_list[id[0]]['Mdot_accs'][id[1]])
 					mst.append(self.region_list[id[0]]['msts'][id[1]])
+					dva.append(self.region_list[id[0]]['dv_local'][id[1]]/1e5)
+					drhoa.append(self.region_list[id[0]]['rho_local'][id[1]])
 
 					if np.amax(self.region_list[id[0]]['t_evols'][id[1]])<tmax_min:
 						teval_ = self.region_list[id[0]]['t_evols'][id[1]]
@@ -632,7 +637,8 @@ class sfr_database():
 				
 				print('Running disc evolution calculation...')
 
-				disc_mass, mdot_star, frac_tend, disc_radius, disc_vt = de.mdot_tacc(Mda, Ra, teval_, ta, dt_, mst, plot=False, mu=-.5, fM=minit, fM_disp=minitdisp,sigma=1.0)
+				disc_mass, mdot_star, frac_tend, disc_radius, disc_vt, mdot_BHL, rho_BHL, dv_BHL = de.mdot_tacc(Mda, Ra, teval_, ta, dt_, mst, drhoa, dva, plot=False, mu=-.5, fM=minit, fM_disp=minitdisp,sigma=1.0)
+					
 				
 				setattr(self, 'mdiscevol'+tag, disc_mass)
 				setattr(self, 'mdotevol'+tag, mdot_star)
@@ -640,6 +646,9 @@ class sfr_database():
 				setattr(self, 'mstevol'+tag, mst)
 				setattr(self, 'vtevol'+tag, disc_vt)
 				setattr(self, 'rdiscevol'+tag, disc_radius)
+				setattr(self, 'mdotBHLevol'+tag, mdot_BHL)
+				setattr(self, 'rhoBHLevol'+tag, rho_BHL)
+				setattr(self, 'dvBHLevol'+tag, dv_BHL)
 
 				self.save()
 			
@@ -744,9 +753,6 @@ class sfr_database():
 			ax.tick_params(which='both', left=True, right=True, top=True, bottom=True)
 			plt.savefig('taud_evol'+tag+'.pdf', bbox_inches='tight', format='pdf')
 			plt.show()
-
-
-
 
 			
 			return None
@@ -856,7 +862,135 @@ class sfr_database():
 			
 			return None
 			
+		def plot_accretion_rates_wevap(self, Nsample=8, ages=[0.0, 0.5, 1.0, 2.0, 4.0, 8.0],idt=0, mlim =250.0, ptag=''):
 			
+			tag = ptag
+			if minit>0.0:
+				if not hasattr(self, 'tags'):
+					self.tags  = [] 
+				tag += '_minit_%.2lf'%minit
+				if minitdisp>0.0:
+					tag += '_mdisp_%.2lf'%minitdisp
+				if not tag in self.tags:
+					self.tags.append(tag)
+			
+				
+			nsamp_tot = len(getattr(self, 'mdisc_evol'+tag)[idt])
+			irands = np.random.choice(np.arange(nsamp_tot), size=Nsample)
+			tplt = []
+			Raplt = []
+			Mdplt = []
+			vplt = []
+			rhoplt = []
+			mstar_plt = []
+			for irand in enumerate(irands):
+				mstar_plt.append(getattr(self, 'mstevol'+tag)[idt]/Msol2g)
+				vplt.append(getattr(self, 'dvBHLevol'+tag)[idt])
+				Mdplt.append(getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g)
+				rhoplt.append(getattr(self, 'rhoBHLevol'+tag)[idt])
+				
+			mstar_plt = np.array(mstar_plt).flatten()
+			cmap = plt.cm.viridis  # Choose a colormap
+			normalize = plt.Normalize(vmin=np.min(np.log10(mstar_plt)), vmax=np.max(np.log10(mstar_plt)))  # Normalize stellar mass for colormap
+
+			# Create figure and axis objects
+			fig, axs = plt.subplots(nrows=3, figsize=(5, 10),  sharex='col')
+
+			# Plot relative velocity, density, and accretion rate over time
+			for i in range(Nsample):
+				axs[0].plot(tplt[i], vplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
+			
+			axs[0].set_yscale('log')
+			axs[0].set_ylabel('Relative velocity: $\\Delta v_\mathrm{gas}$ [km s$^{-1}$]')
+			axs[0].tick_params(which='both', axis='both', direction='inout', right=True, left=True, top=True, bottom=True)
+
+
+			for i in range(Nsample):
+				axs[1].plot(tplt[i], rhoplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
+
+
+			arrow_height = 0.5  # Height of the arrow in data coordinates
+			arrow_length = 0.3
+			Thigh_dense = {'L1495': [2616, 31.7], 'B213': [1095,13.7], 'L1521': [1584, 17.6], "HCl2" : [1513,  15.8], 'L1498': [373, 5.7],  'L1506': [491, 7.7]}
+			ireg = 0
+			for Treg in Thigh_dense:
+				Mtmp = Thigh_dense[Treg][0]
+				atmp = Thigh_dense[Treg][1]
+				rhotmp = Mtmp/(4.*np.pi*0.333*(atmp/np.pi)**1.5)
+				rhotmp *= Msol2g*(1./pc2cm)**3
+				print(rhotmp)
+				axs[1].axhline(rhotmp, color=CB_color_cycle[ireg], linewidth=1, linestyle='dotted')
+				x0 = 1.0
+				dx = 1.1
+				axs[1].annotate('', xy=(x0+dx*ireg, rhotmp*2.0), xytext=(x0+dx*ireg, rhotmp*0.9),
+				arrowprops=dict(arrowstyle='->', color=CB_color_cycle[ireg], lw=1), color=CB_color_cycle[ireg])
+				axs[1].text(x0+dx*ireg, rhotmp*10.0, Treg, color=CB_color_cycle[ireg])
+
+				ireg+=1
+			
+
+			#axs[1].axhline(6.46e-22, color='r', linewidth=1, linestyle='dashed', label='Mean high density regions in Taurus:\nGoldsmith et al. 2008')
+			axs[1].set_yscale('log')
+			axs[1].set_ylabel('Density: $\\rho_\mathrm{gas}$ [g cm$^{-3}$]')
+
+			axs[1].tick_params(which='both', axis='both', direction='inout', right=True, left=True, top=True, bottom=True)
+			#axs[1].legend(loc='best')
+			for i in range(Nsample):
+				axs[2].plot(tplt[i], Mdplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
+
+			print("EDITING HERE")
+			trange = np.linspace(0.0, 8.0, 500)
+			Mda = np.zeros((len(iregs_avg), len(trange)))
+			for iplt, ireg in enumerate(iregs_avg):
+				ist = ists_avg[iplt]
+				Mda_tmp = getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g
+				t_tmp = self.region_list[ireg]['t_evols'][ist]/Myr2s
+				mst_tmp = self.region_list[ireg]['msts'][ist]/Msol2g
+				Mda[iplt] = np.interp(trange, t_tmp, Mda_tmp/mst_tmp/mst_tmp)
+
+			Mda_med = np.median(Mda, axis=0)
+			Mda_mean = np.mean(Mda, axis=0)
+			binsy = np.logspace(np.log10(3e-14), np.log10(5e-6), 20)
+			binsx = np.linspace(trange[0], trange[-1], 25)
+			tgrid = trange[np.newaxis, :]*np.ones(Mda.shape)
+			axs[2].plot(trange, Mda_med, color='r', linewidth=1, linestyle='solid', label='Median')
+			axs[2].plot(trange, Mda_mean, color='r', linewidth=1, linestyle='dashed', label='Mean')
+			axs[2].hist2d(tgrid.flatten(), Mda.flatten(), bins=(binsx, binsy), cmap='gray_r')
+
+			axs[2].set_ylabel('Norm. BHL acc.: $\dot{M}_\mathrm{BHL} \\cdot \left(\\frac{m_*}{1\, M_\odot}\\right)^{-2}$ [$M_\odot$ yr$^{-1}$]')
+			axs[2].set_yscale('log')
+			axs[2].set_xlim([0.0, 8.0])
+			axs[2].set_xlabel('Time: $t$ [Myr]')
+			axs[2].tick_params(which='both', axis='both', direction='inout', right=True, left=True, top=True, bottom=True)
+
+			axs[2].legend(loc='best', fontsize=7)
+
+			#axs[2].plot(tsp, Mdot_cc, color='k',  linewidth=1, linestyle='dashed', label='Cloud capture')
+
+			#axs[2].legend(loc='best', fontsize=7)
+			#axs[2, 1].axhline(np.mean(mdotacc[iplot]), linestyle='solid', linewidth=1, color='k')
+			#axs[2, 1].axhline(np.median(mdotacc[iplot]), linestyle='dashed', linewidth=1, color='k')\
+
+			#axs[2, 0].axhline(np.mean(mdotacc[iplot]), linestyle='solid', linewidth=1, color='k')
+			#axs[2, 0].axhline(np.median(mdotacc[iplot]), linestyle='dashed', linewidth=1, color='k')
+
+			sm = plt.cm.ScalarMappable(cmap=cmap, norm=normalize)
+			sm.set_array([])
+			# Create a colorbar
+
+			axs[2].set_ylim([3e-14,5e-6])
+			axs[1].set_ylim([3e-25, 3e-19])
+			axs[0].set_ylim([0.03, 20.0])
+
+			# Remove white space between plots
+			plt.subplots_adjust(wspace=0.05, hspace=0, top=0.95)
+			cbar = fig.colorbar(sm, ax=axs.ravel().tolist(), orientation='horizontal', location='top',fraction=0.05, pad=0.00, anchor=(0.5, 1.0))
+			cbar.set_label('log. Star mass: $m_*$ [$M_\odot$]')
+
+			plt.savefig('mdot_tevol.pdf', bbox_inches='tight', format='pdf')
+			# Adjust layout and show the plot
+			#plt.tight_layout()
+			plt.show()
 		
 		def plot_accretion_rates(self, Nsample=8, ages=[0.0, 0.5, 1.0, 2.0, 4.0, 8.0], mlim =250.0):
 			iregs, ists = self.draw_representative_sample(Nsample, mreglim=mlim).T[:]

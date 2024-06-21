@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from scipy.interpolate import interp1d
 
-def find_closest_mass_file(directory, target_mass, tol= 0.2):
+def find_closest_mass_file(directory, target_mass, tol= 0.5):
 	closest_mass = None
 	closest_filename = None
 
@@ -18,10 +18,13 @@ def find_closest_mass_file(directory, target_mass, tol= 0.2):
 			except ValueError:
 				continue
 
+	
 	if closest_mass is None:
 		raise Warning('No stellar model file found.')
-	if abs(closest_mass-target_mass)/target_mass>tol:
+	if abs(closest_mass-target_mass)/target_mass>tol and target_mass>0.1:
+		
 		raise Warning('No stellar model within %d percent of specified initial mass found.'%(tol*100))
+		
 
 	return closest_filename, closest_mass
 

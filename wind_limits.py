@@ -1,16 +1,16 @@
 import numpy as np
-import proplot as pplt
 import matplotlib.pyplot as plt
 import stellar_evolution as se
 import stellar_spectra as ss
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.colors import Normalize
 from scipy.interpolate import RegularGridInterpolator
 
 plt.rc('text', usetex=True)
 
-pplt.rc.update({
+"""pplt.rc.update({
     'linewidth': 1, 'ticklabelweight': 'bold', 'axeslabelweight': 'bold'
-})
+})"""
 G = 6.67e-8
 Msol  =1.989e33
 au = 1.496e13
@@ -20,6 +20,7 @@ k_B = 1.81e-16 #cgs K^-1
 Lsol = 3.828e33 #erg/s
 year = 365.*24.*60.0*60.0
 
+ref_density = 1e-20
 
 
 def compute_Rcrit(Mstar, Lstar, flang=np.pi/2, mu=2.3):
@@ -42,69 +43,123 @@ def compute_Rstrom(Phi_Ly, rho0, alphaB=2.6e-13):
 def compute_Mdotwind(Mstar, Lstar_UV, Racc, eps_geo=0.1):
 	return Lstar_UV*eps_geo*(Racc/G/Mstar)
 
-
-def interpolate_Rwind(mstar_input, age_input, mdot_input, rho0=1e-20):
-
+def get_Rwind_interpolator(mstar_input):	
 	try:
 		# Load precomputed grids
 		mstar_space = np.load('Rwind_mstar.npy')
 		age_space = np.load('Rwind_age.npy')
-		mdot_mstar_space = np.load('Rwind_mdot_norm.npy')
+		mdot_space = np.load('Rwind_mdotacc.npy')
 		Rwinds = np.load('Rwind_grid.npy')
 	except:
 		construct_grid()
 		mstar_space = np.load('Rwind_mstar.npy')
 		age_space = np.load('Rwind_age.npy')
-		mdot_mstar_space = np.load('Rwind_mdot_norm.npy')
+		mdot_space = np.load('Rwind_mdotacc.npy')
 		Rwinds = np.load('Rwind_grid.npy')
 		
-
+	
 	# Find the closest stellar mass in the grid
 	mstar_idx = np.abs(mstar_space - mstar_input).argmin()
-	closest_mstar = mstar_space[mstar_idx]
+	# Interpolation in age and Mdot space for the closest stellar mass
+	Rwind_interpolator = RegularGridInterpolator((np.log10(age_space), np.log10(mdot_space)), np.log10(Rwinds[mstar_idx, :, :].T), bounds_error=False, fill_value=np.nan)
+	
+	return Rwind_interpolator
+
+
+def interpolate_Rwind(mstar_input, age_input, mdot_input, rho0=ref_density, Rwind_interpolator=None, debug=False):
+	if Rwind_interpolator is None:
+		Rwind_interpolator = get_Rwind_interpolator(mstar_input)
 
 	# Normalize the input accretion rate by the square of the stellar mass
-	mdot_norm_input = mdot_input / (mstar_input ** 2)
-
-	# Interpolation in age and Mdot space for the closest stellar mass
-	age_mdot_interpolator = RegularGridInterpolator((age_space, mdot_mstar_space), np.log10(Rwinds[mstar_idx, :, :].T), bounds_error=False, fill_value=np.nan)
-
-	interpolated_Rwind = 10.**age_mdot_interpolator((age_input, mdot_norm_input))
-
-	return interpolated_Rwind
+	mdot_norm_input = np.asarray(mdot_input)
+	if isinstance(mdot_norm_input, float) or isinstance(mdot_norm_input, np.float64):
+		mdot_norm_input = np.array([mdot_norm_input])
+	
+	
+	mdot_norm_input[mdot_norm_input >1e-6] =1e-6
+	mdot_norm_input[mdot_norm_input <1e-13] =1e-13
+	
+	
+	if isinstance(age_input, float) or isinstance(age_input, np.float64):
+		age_input = np.array([age_input])
+	age_input[age_input <0.1] =0.1
+	age_input[age_input >30.0] =30.0
+	
+	if debug:
+		interpolated_Rwind = 10.**Rwind_interpolator((np.log10(age_input), np.log10(mdot_norm_input)))
+		print(np.log10(age_input), np.log10(mdot_norm_input))
+		print(interpolated_Rwind*(ref_density/rho0)**2/au)
+		
+		Mdv =  mdot_input
+		_, ion_frac_acc, LUV_acc = ss.compute_fractional_uv_luminosity_over_time(mstar_input, 
+						                                             metallicity=0.0, 
+						                                             ages=age_input*1e6, 
+						                                             Mdot_accs=mdot_input, 
+						                                             wavelim=2070.0)
+		Rwind_dbg = compute_Rwind(mstar_input*Msol, LUV_acc, rho0)
+		print('Rwind direct:',Rwind_dbg/au)
+		print('Rwind interp:', interpolated_Rwind*(ref_density/rho0)**2/au)
+		
+		
+	else:
+		try:
+			interpolated_Rwind = 10.**Rwind_interpolator((np.log10(age_input), np.log10(mdot_norm_input)))
+		except:
+			print(age_input, mdot_norm_input)
+			exit()
+	"""
+	_, ion_frac_acc, LUV_acc = ss.compute_fractional_uv_luminosity_over_time(mstar_input, 
+					                                             metallicity=0.0, 
+					                                             ages=age_input*1e6, 
+					                                             Mdot_accs=mdot_input, 
+					                                             wavelim=2070.0)
+					                                             	
+	compute_Rwind(mstar_input*Msol, LUV_acc, rho0) #
+	"""
+	#print("Warning: you were checking the interpolation before!")		                                             
+	return interpolated_Rwind*(ref_density/rho0)**2
 	
 
-def create_contour_plot_for_star(mstar_input, ax):
+def create_contour_plot_for_star(mstar_input, ax, norm, cmap,levels=np.arange(1., 7.5, 0.5)):
 	try:
 		# Load precomputed grids
 		mstar_space = np.load('Rwind_mstar.npy')
 		age_space = np.load('Rwind_age.npy')
-		mdot_mstar_space = np.load('Rwind_mdot_norm.npy')
+		mdot_space = np.load('Rwind_mdotacc.npy')
 		Rwinds = np.load('Rwind_grid.npy')
 	except:
 		construct_grid()
 		mstar_space = np.load('Rwind_mstar.npy')
 		age_space = np.load('Rwind_age.npy')
-		mdot_mstar_space = np.load('Rwind_mdot_norm.npy')
+		mdot_space = np.load('Rwind_mdotacc.npy')
 		Rwinds = np.load('Rwind_grid.npy')
+		
+		
+
 
 	# Find the closest stellar mass in the grid
 	mstar_idx = np.abs(mstar_space - mstar_input).argmin()
 	closest_mstar = mstar_space[mstar_idx]
+	
+	print(Rwinds.shape)
 
-	age_space = np.logspace(0.1, 1.0, 30)
-	mdot_space = np.logspace(-10., -6., 35)
+	age_space_int = np.logspace(-1.0, 1.0, 40)
+	mdot_space_int = np.logspace(-10., -6., 45)
 
 	# Create meshgrid for age and mdot space
-	age_grid, mdot_grid = np.meshgrid(age_space, mdot_space)
+	age_grid, mdot_grid = np.meshgrid(age_space_int, mdot_space_int)
+	age_grid_in, mdot_grid_in = np.meshgrid(age_space, mdot_space)
 
 	# Interpolate Rwind values
 	Rwind_values = np.array([interpolate_Rwind(mstar_input, age, mdot) for age, mdot in zip(np.ravel(age_grid), np.ravel(mdot_grid))])
 	Rwind_values = Rwind_values.reshape(age_grid.shape)
-
+	
+	print(np.log10(Rwinds[mstar_idx,:,:]/au))
 	# Create contour plot
-	contour = ax.contourf(age_space, mdot_space, np.log10(Rwind_values/au), cmap='viridis')
-	ax.scatter(age_grid, mdot_grid, facecolors='none', edgecolors='black')
+	contour = ax.contourf(age_space_int, mdot_space_int, np.log10(Rwind_values/au), cmap=cmap, norm=norm, levels=levels) # Create contour plot
+	print(age_grid_in.shape, mdot_grid_in.shape, Rwinds[mstar_idx,:,:].shape)
+	sc = ax.scatter(age_grid_in, mdot_grid_in*(mstar_input)**2, c=np.log10(Rwinds[mstar_idx,:,:]/au), cmap=cmap, norm=norm, edgecolors='black')
+	
 	ax.set_xscale('log')
 	ax.set_yscale('log')
 	ax.set_title(f'Stellar Mass: {mstar_input} $M_\\odot$')
@@ -112,30 +167,29 @@ def create_contour_plot_for_star(mstar_input, ax):
 	ax.set_ylabel('Accretion Rate (normalized)')
 	return contour
 
-def construct_grid(mstar_space=np.logspace(-1., 1., 12), 
+def construct_grid(mstar_space=np.logspace(-1., 1., 15), 
                    age_space=np.logspace(-1., 1.5, 40), 
-                   mdot_mstar_space=np.logspace(-10., -6, 30), 
-                   rho0=1e-20):
+                   mdot_space=np.logspace(-13., -6., 50)):
     
 	Nmst = len(mstar_space)
 	Nage = len(age_space)
-	Nmdot = len(mdot_mstar_space)
+	Nmdot = len(mdot_space)
 	Rwinds = np.zeros((Nmst, Nmdot, Nage))
 
 	np.save('Rwind_mstar', mstar_space)
 	np.save('Rwind_age', age_space)
-	np.save('Rwind_mdot_norm', mdot_mstar_space)
+	np.save('Rwind_mdotacc', mdot_space)
 
 	for imstar in range(Nmst):
 		print('Mstar:', mstar_space[imstar])
 		for imdot in range(Nmdot):
-			Mdv = np.ones(len(age_space)) * mdot_mstar_space[imdot] * mstar_space[imstar]**2
+			Mdv = np.ones(len(age_space)) * mdot_space[imdot] 
 			_, ion_frac_acc, LUV_acc = ss.compute_fractional_uv_luminosity_over_time(mstar_space[imstar], 
 						                                             metallicity=0.0, 
 						                                             ages=age_space*1e6, 
 						                                             Mdot_accs=Mdv, 
 						                                             wavelim=2070.0)
-			Rwinds[imstar, imdot, :] = compute_Rwind(mstar_space[imstar], LUV_acc, rho0)
+			Rwinds[imstar, imdot, :] = compute_Rwind(mstar_space[imstar]*Msol, LUV_acc, ref_density)
 
 	np.save('Rwind_grid', Rwinds)
     
@@ -216,7 +270,7 @@ def plot_Rstrom(rho0=1e-24):
 
 def plot_Rwind(rho0=1e-24):
 
-	
+	import proplot as pplt
 	# Create a grid of stellar mass and luminosity
 	Mstar = np.logspace(-0.5, 1., 50) * Msol # From 0.1 to 30 solar masses
 	Lstar = np.logspace(-10, 3, 60) * Lsol # From 0.1 to 1000 solar luminosities
@@ -287,7 +341,7 @@ def plot_Rwind(rho0=1e-24):
 	
 
 def plot_Rcrit():
-	
+	import proplot as pplt
 	# Create a grid of stellar mass and luminosity
 	Mstar = np.logspace(-1.5, 1.0, 50) * Msol # From 0.1 to 30 solar masses
 	Lstar = np.logspace(-3, 3, 60) * Lsol # From 0.1 to 1000 solar luminosities
@@ -340,15 +394,31 @@ def plot_Rcrit():
 	plt.show()
 		
 if __name__=='__main__':
+	#construct_grid()
+	
+	#plot_Rwind(rho0=1e-22)
+	#exit()
+	# Load data to determine the normalization range
+	mstar_space = np.load('Rwind_mstar.npy')
+	age_space = np.load('Rwind_age.npy')
+	mdot_space = np.load('Rwind_mdotacc.npy')
+	Rwinds = np.load('Rwind_grid.npy')
+
+	# Calculate min and max for normalization
+	vmin = 1.0
+	vmax = 7.0
+	norm = Normalize(vmin=vmin, vmax=vmax)
+	cmap = 'viridis'
+
 	# Set up figure and axes for 2x2 plot
 	fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
 	# List of stellar masses to plot
-	stellar_masses = [0.2, 0.5, 1.0, 2.0]
+	stellar_masses = [0.6, 0.7, 0.8, 1.0]
 
 	# Plot each stellar mass
 	for mstar, ax in zip(stellar_masses, axes.flatten()):
-		contour = create_contour_plot_for_star(mstar, ax)
+		contour = create_contour_plot_for_star(mstar, ax, norm, cmap)
 
 	# Adjust layout and add colorbar
 	plt.tight_layout()
@@ -358,5 +428,3 @@ if __name__=='__main__':
 	plt.show()
 	#plot_Rcrit()
 	#plot_Rstrom(rho0=1e-24)
-	plot_Rwind(rho0=1e-20)
-	exit()
