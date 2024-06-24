@@ -55,9 +55,8 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 					Mdot_Msoly = y[0]*year2s/dt/Msol2g
 					Rwind = wl.interpolate_Rwind(mstars[istar]/Msol2g, t/Myr2s, Mdot_Msoly, rho0=rho_func(t), Rwind_interpolator=Rwinterp)
 					RBHL = RBHL_func(t)
-					if Rwind>RBHL:
-						MdBHL *= 1e-5
-						
+					MdBHL *= np.exp(-(Rwind/RBHL)**2)
+					
 					mdot = -y[0]/dt + MdBHL
 					vin2 = 2*G*mstars[istar]/Rdisc
 
