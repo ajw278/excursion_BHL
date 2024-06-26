@@ -6,6 +6,8 @@ from consts_defaults import *
 import wind_limits as wl
 import copy
 
+CB_color_cycle = ['#377eb8', '#ff7f00', '#4daf4a','#f781bf', '#a65628', '#e41a1c','#984ea3', '#dede00', '#999999','cyan', 'teal']
+
 """
 mdot_tacc
 Given a BHL accretion rate and star-disc accretion time-scale, self-consistently solve the disc evolution
@@ -60,8 +62,8 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 					mdot = -y[0]/dt + MdBHL
 					vin2 = 2*G*mstars[istar]/Rdisc
 
-					vt_ = np.sqrt(2.*y[1]/(y[0]+1e-60)+1e-30)
-					dt_e = 0.1*Rdisc/(vt_+1e-60)
+					vt_ = np.sqrt(2.*max(float(y[1]),0.0)/max(float(y[0]), 1e-30))
+					dt_e = 0.1*Rdisc/max(vt_, 1e-60)
 
 					Ein  =  0.5*MdBHL*vin2
 					Eout =  y[1]/dt_e
@@ -79,8 +81,8 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 					mdot = -y[0]/dt + MdBHL
 					vin2 = 2*G*mstars[istar]/Rdisc
 
-					vt_ = np.sqrt(2.*y[1]/(y[0]+1e-60)+1e-30)
-					dt_e = 0.1*Rdisc/(vt_+1e-60)
+					vt_ = np.sqrt(2.*max(float(y[1]),0.0)/max(float(y[0]), 1e-30))
+					dt_e = 0.1*Rdisc/max(vt_, 1e-60)
 
 					Ein  =  0.5*MdBHL*vin2
 					Eout =  y[1]/dt_e
@@ -93,7 +95,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 			m0 = fM*Msol2g*((mstars[istar]/Msol2g)**2)
 			if m0>0.0:
 				m0 = 10.**(np.log10(m0)+ np.random.normal(loc=0.0, scale=fM_disp))
-			sol = solve_ivp(mmdotEt_func, (teval_[0], teval_[-1]), [m0, 0.0], method='LSODA', t_eval=teval_, rtol=1e-10, atol=1e-10)
+			sol = solve_ivp(mmdotEt_func, (teval_[0], teval_[-1]), [m0, 0.0], method='RK45', t_eval=teval_, rtol=1e-10, atol=1e-10)
 			mdisc = sol.y[0].flatten()
 			Edisc = sol.y[1].flatten()
 
@@ -142,7 +144,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 				disc_radius[ikern][istar][ir:] = RBHL_func(teval_[ir])
 
 			
-			if ((istar+1)%10)==0:
+			if ((istar+1)%5)==0:
 				print('Disc evolution computation complete for star %d/%d '%(istar+1, len(Mdot_BHL))) 
 		
 		print('Disc mass calculation complete for %d/%d accretion times'%(ikern+1, len(dts)))
@@ -188,7 +190,6 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 		plt.legend(loc='best', ncols=2, fontsize=8)
 		plt.savefig('material_fraction.pdf', bbox_inches='tight', format='pdf')
 		plt.show()
-
 
 
 		fig, ax = plt.subplots(figsize=(5.,4.))
