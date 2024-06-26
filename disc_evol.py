@@ -95,7 +95,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 			m0 = fM*Msol2g*((mstars[istar]/Msol2g)**2)
 			if m0>0.0:
 				m0 = 10.**(np.log10(m0)+ np.random.normal(loc=0.0, scale=fM_disp))
-			sol = solve_ivp(mmdotEt_func, (teval_[0], teval_[-1]), [m0, 0.0], method='RK45', t_eval=teval_, rtol=1e-10, atol=1e-10)
+			sol = solve_ivp(mmdotEt_func, (teval_[0], teval_[-1]), [m0, 0.0], method='LSODA', t_eval=teval_, rtol=1e-9, atol=1e-9)
 			mdisc = sol.y[0].flatten()
 			Edisc = sol.y[1].flatten()
 
