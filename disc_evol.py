@@ -31,7 +31,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 		dt= dt_
 		# Calculate the Gaussian kernel for each element in data
 		for istar in range(len(Mdot_BHL)):
-			Rwinterp = wl.get_Rwind_interpolator(mstars[istar]/Msol2g, eps_wind=eps_wind)
+			Rwinterp = wl.get_Rwind_interpolator(mstars[istar]/Msol2g)
 			
 			if dt_=='ln':
 				#dt = 10.**np.random.normal(loc=mu, scale=sigma)
@@ -55,7 +55,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 					MdBHL = BHL_func(t)
 					
 					Mdot_Msoly = y[0]*year2s/dt/Msol2g
-					Rwind = wl.interpolate_Rwind(mstars[istar]/Msol2g, t/Myr2s, Mdot_Msoly, rho0=rho_func(t), Rwind_interpolator=Rwinterp)
+					Rwind = wl.interpolate_Rwind(mstars[istar]/Msol2g, t/Myr2s, Mdot_Msoly, rho0=rho_func(t), Rwind_interpolator=Rwinterp, eps_wind=eps_wind)
 					RBHL = RBHL_func(t)
 					MdBHL *= float(np.exp(-(float(Rwind)/float(RBHL))**2))
 
