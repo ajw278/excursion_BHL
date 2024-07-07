@@ -585,7 +585,7 @@ class sfr_database():
 
 
 
-		def calc_discevol(self, redraw=True, Nsample=1, maxtres=20000, minit=0.0, minitdisp=0.0, mlim=250., ptag='', wind=False):
+		def calc_discevol(self, redraw=True, Nsample=1, maxtres=20000, minit=0.0, minitdisp=0.0, mlim=250., ptag='', wind=False, eps_wind=0.1):
 
 			tag = ptag
 			if minit>0.0:
@@ -602,6 +602,7 @@ class sfr_database():
 				setattr(self, 'idiscevol'+tag, self.draw_representative_sample(Nsample, mreglim=mlim))
 
 			setattr(self, 'wind'+tag, wind)
+			setattr(self, 'eps_wind'+tag, eps_wind)
 			
 			if not hasattr(self, 'mdiscevol'+tag) or redraw:
 				print( hasattr(self, 'mdiscevol'+tag), redraw)
@@ -640,7 +641,8 @@ class sfr_database():
 				
 				print('Running disc evolution calculation...')
 				wind = getattr(self, 'wind'+tag)
-				disc_mass, mdot_star, frac_tend, disc_radius, disc_vt, mdot_BHL, rho_BHL, dv_BHL = de.mdot_tacc(Mda, Ra, teval_, ta, dt_, mst, drhoa, dva, plot=False, mu=-.5, fM=minit, fM_disp=minitdisp,sigma=1.0, wind=wind)
+				eps_wind = getattr(self, 'eps_wind'+tag)
+				disc_mass, mdot_star, frac_tend, disc_radius, disc_vt, mdot_BHL, rho_BHL, dv_BHL = de.mdot_tacc(Mda, Ra, teval_, ta, dt_, mst, drhoa, dva, plot=False, mu=-.5, fM=minit, fM_disp=minitdisp,sigma=1.0, wind=wind, eps_wind=eps_wind)
 					
 				
 				setattr(self, 'mdiscevol'+tag, disc_mass)

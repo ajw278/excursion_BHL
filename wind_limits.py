@@ -21,6 +21,7 @@ Lsol = 3.828e33 #erg/s
 year = 365.*24.*60.0*60.0
 
 ref_density = 1e-20
+ref_eps_wind = 0.01
 
 
 def compute_Rcrit(Mstar, Lstar, flang=np.pi/2, mu=2.3):
@@ -66,7 +67,7 @@ def get_Rwind_interpolator(mstar_input):
 	return Rwind_interpolator
 
 
-def interpolate_Rwind(mstar_input, age_input, mdot_input, rho0=ref_density, Rwind_interpolator=None, debug=False):
+def interpolate_Rwind(mstar_input, age_input, mdot_input, rho0=ref_density, Rwind_interpolator=None, debug=False, eps_wind=0.1):
 	if Rwind_interpolator is None:
 		Rwind_interpolator = get_Rwind_interpolator(mstar_input)
 
@@ -117,7 +118,7 @@ def interpolate_Rwind(mstar_input, age_input, mdot_input, rho0=ref_density, Rwin
 	compute_Rwind(mstar_input*Msol, LUV_acc, rho0) #
 	"""
 	#print("Warning: you were checking the interpolation before!")		                                             
-	return interpolated_Rwind*(ref_density/rho0)**2
+	return interpolated_Rwind*((eps_wind/ref_eps_wind)**2 )* ((ref_density/rho0)**2)
 	
 
 def create_contour_plot_for_star(mstar_input, ax, norm, cmap,levels=np.arange(1., 7.5, 0.5)):

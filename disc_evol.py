@@ -12,7 +12,7 @@ CB_color_cycle = ['#377eb8', '#ff7f00', '#4daf4a','#f781bf', '#a65628', '#e41a1c
 mdot_tacc
 Given a BHL accretion rate and star-disc accretion time-scale, self-consistently solve the disc evolution
 """
-def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot=False, mu=-.5, sigma=1.0 , fM=0.0, fM_disp = 0.0, G=Gcgs, wind=False):
+def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot=False, mu=-.5, sigma=1.0 , fM=0.0, fM_disp = 0.0, G=Gcgs, wind=False, eps_wind=0.1):
 
 	# Apply convolution
 	mdot_star = np.zeros((len(dts), len(Mdot_BHL), len(teval_)))
@@ -31,7 +31,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 		dt= dt_
 		# Calculate the Gaussian kernel for each element in data
 		for istar in range(len(Mdot_BHL)):
-			Rwinterp = wl.get_Rwind_interpolator(mstars[istar]/Msol2g)
+			Rwinterp = wl.get_Rwind_interpolator(mstars[istar]/Msol2g, eps_wind=eps_wind)
 			
 			if dt_=='ln':
 				#dt = 10.**np.random.normal(loc=mu, scale=sigma)
