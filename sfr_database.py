@@ -169,12 +169,50 @@ class sfr_database():
 			ax.tick_params(which='both', top=True, right=True, bottom=True, left=True)
 			plt.savefig('disc_fraction'+tag+'.pdf', bbox_inches='tight', format='pdf')
 			plt.show()
+		
+		def plot_discfrac_msplit(self, mlim=mllim, mstlim=0.1, tag='', mbins = [0.1, 0.3, 1.0, np.inf]):
+			mst_all =np.array(getattr(self, 'mstevol'+tag))
+			iinc = mst_all/Msol2g>mstlim
+			mst_inc = mst_all[iinc]
+			md = getattr(self, 'mdiscevol'+tag)[0][iinc]/Msol2g
+			tde = np.array(getattr(self, 'tdiscevol'+tag))/Myr2s
+			iab = md>mlim
+
+			dfrac = np.sum(iab, axis=0)/float(len(md))
+
+			fig, ax = plt.subplots(figsize=(6.,4.))
+			plt.plot(tde, dfrac, color='k', linewidth=1, label='All discs')
+
+			plt.ylabel('Disc fraction ($M_\mathrm{disc} > %d \\times 10^{-5} \, M_\odot$)'%(mllim/1e-5))
 			
-		def plot_rplf(self, mlim=mllim,tplot = [1.0, 2., 3.0, 8.0], mstlim=0.1, idt=0, tag=''):
+			for im in range(len(mbins)-1):
+				ibin_ = (mst_inc/Msol2g<mbins[im+1])&(mst_inc/Msol2g>=mbins[im])
+				ibin_ab= iab&ibin_[:,np.newaxis]
+				dfrac_ = np.sum(ibin_ab, axis=0)/np.sum(ibin_, axis=0)
+				if im<len(mbins)-2:
+					plt.plot(tde, dfrac_, color=CB_color_cycle[im], linewidth=1, label= '$%.1lf \, M_\odot >m_* > %.1lf \, M_\odot$'%(mbins[im+1],mbins[im]))
+				else:
+					plt.plot(tde, dfrac_, color=CB_color_cycle[im], linewidth=1, label= '$m_* > %.1lf \, M_\odot$'%(mbins[im]))
+			
+			plt.xlabel('Age [Myr]')
+			tsp = np.linspace(0., 8.)
+			plt.plot(tsp, np.exp(-tsp/3.), color='b',linewidth=1, label='$\\tau_\mathrm{disc} = 3$ Myr')
+			plt.plot(tsp, np.exp(-tsp/5.), color='r', linewidth=1, label='$\\tau_\mathrm{disc} = 5$ Myr')
+
+
+			plt.ylim([0.,1.])
+			plt.xlim([0., 8.])
+			plt.legend(loc='best')
+			ax.tick_params(which='both', top=True, right=True, bottom=True, left=True)
+			plt.savefig('disc_fraction_msplit'+tag+'.pdf', bbox_inches='tight', format='pdf')
+			plt.show()
+			
+		def plot_rplf(self, mlim=mllim,tplot = [1.0, 2., 3.0, 8.0], mstllim=0.1,mstulim=np.inf, idt=0, tag=''):
 			m_star = np.array(getattr(self, 'mstevol'+tag))/Msol2g
 			time = np.array(getattr(self, 'tdiscevol'+tag))/Myr2s
 
-			iinc = m_star>mstlim
+			iinc = (m_star>mstllim)&(m_star<mstulim)
+			print(np.sum(iinc), len(iinc))
 			mdisc = getattr(self, 'mdiscevol'+tag)[:, iinc,:]/Msol2g
 			fracmdisc = getattr(self, 'rpfevol'+tag)[:, iinc, :]
 			m_star = m_star[iinc]
@@ -238,7 +276,7 @@ class sfr_database():
 			axs[1].set_xlabel('Cum. frac.')
 			axs[0].tick_params(which='both', right=True, left=True, top=True, bottom=True)
 			axs[1].tick_params(which='both', right=True, left=True, top=True, bottom=True)
-			axs[1].legend(loc='best', fontsize=8)
+			axs[1].legend(loc=2, fontsize=8)
 			plt.savefig('hlrf'+tag+'.png', bbox_inches='tight', format='png', dpi=500)
 			plt.show()
 			
@@ -642,6 +680,10 @@ class sfr_database():
 				print('Running disc evolution calculation...')
 				wind = getattr(self, 'wind'+tag)
 				eps_wind = getattr(self, 'eps_wind'+tag)
+				
+				
+				disc_mass, mdot_star, frac_tend, disc_radius, disc_vt, mdot_BHL, rho_BHL, dv_BHL = de.mdot_tacc(Mda[:1], Ra[:1], teval_, ta[:1], [0.1*Myr2s, 0.3*Myr2s,1.0*Myr2s] , mst[:1], drhoa[:1], dva[:1], plot=True, mu=-.5, fM=minit, fM_disp=minitdisp,sigma=1.0, wind=wind, eps_wind=eps_wind)
+				exit()
 				disc_mass, mdot_star, frac_tend, disc_radius, disc_vt, mdot_BHL, rho_BHL, dv_BHL = de.mdot_tacc(Mda, Ra, teval_, ta, dt_, mst, drhoa, dva, plot=False, mu=-.5, fM=minit, fM_disp=minitdisp,sigma=1.0, wind=wind, eps_wind=eps_wind)
 					
 				
@@ -928,7 +970,8 @@ class sfr_database():
 			for i in range(Nsample):
 				axs[2].plot(tplt, Mdplt[i], color=cmap(normalize(np.log10(mstar_plt[i]))), linewidth=1)
 
-			Mda =  getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g #np.zeros((len(iregs_avg), len(trange)))
+			Mda =  getattr(self, 'mdotBHLevol'+tag)[idt]*year2s/Msol2g #np.zeros((len(iregs_avg), len(trange)))\
+			print('Shape of Mda array:', Mda.shape)
 			msta = np.array(getattr(self, 'mstevol'+tag))/Msol2g
 			Mda /= msta[:, np.newaxis]**2
 

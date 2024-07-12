@@ -24,7 +24,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 	v_amb = np.zeros(mdot_star.shape)
 	mdot_BHL = np.zeros(mdot_star.shape)
 	
-
+	mstars[0] = 1.0*Msol2g
 	if plot:
 		fig, ax = plt.subplots(figsize=(5.,4.))
 	for ikern, dt_ in enumerate(dts):
@@ -51,7 +51,6 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 			if wind:
 				def mmdotEt_func(t, y):
 
-					#print(t/Myr2s)
 					MdBHL = BHL_func(t)
 					
 					Mdot_Msoly = y[0]*year2s/dt/Msol2g
@@ -61,6 +60,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 
 					mdot = -y[0]/dt + MdBHL
 					vin2 = 2*G*mstars[istar]/Rdisc
+					
 
 					vt_ = np.sqrt(2.*max(float(y[1]),0.0)/max(float(y[0]), 1e-30))
 					dt_e = 0.1*Rdisc/max(vt_, 1e-60)
@@ -95,7 +95,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 			m0 = fM*Msol2g*((mstars[istar]/Msol2g)**2)
 			if m0>0.0:
 				m0 = 10.**(np.log10(m0)+ np.random.normal(loc=0.0, scale=fM_disp))
-			sol = solve_ivp(mmdotEt_func, (teval_[0], teval_[-1]), [m0, 0.0], method='LSODA', t_eval=teval_, rtol=1e-9, atol=1e-9)
+			sol = solve_ivp(mmdotEt_func, (teval_[0], teval_[-1]), [m0, 0.0], method='RK45', t_eval=teval_, rtol=1e-9, atol=1e-9)
 			mdisc = sol.y[0].flatten()
 			Edisc = sol.y[1].flatten()
 
@@ -104,6 +104,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 			if istar==0 and plot and dt_!='ln':
 				#plt.plot(tarr_, kernel[npad:-npad], c=CB_color_cycle[ikern], linestyle='dotted', linewidth=1, label='Kernel')
 				plt.plot(sol.t.flatten()/Myr2s, mdisc/Msol2g, c=CB_color_cycle[ikern], linestyle='solid', linewidth=1, label='$\\tau_\mathrm{acc}=%.1lf$ Myr'%(dt/Myr2s))
+				print('Istar:', istar)
 			
 			
 			
@@ -155,7 +156,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 		plt.xlim([0., int(teval_[-1]/Myr2s+0.5)])
 		plt.yscale('log')
 		
-		plt.legend(loc='best', ncols=2, fontsize=8)
+		plt.legend(loc='best',fontsize=8)
 		plt.savefig('disc_mass_evol.pdf', format='pdf', bbox_inches='tight')
 		plt.show()
 
@@ -170,7 +171,7 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 		plt.ylabel('Accretion rate: $\dot{M}_\mathrm{acc}$ [$M_\odot$ yr$^{-1}$]')
 		plt.xlabel('Time: $t$ [Myr]')
 		ax.tick_params(which='both', top=True, bottom=True, left=True, right=True)
-		plt.legend(loc='best', ncols=2, fontsize=8)
+		plt.legend(loc='best', fontsize=8)
 		plt.savefig('accretion_rate_evol.pdf', bbox_inches='tight', format='pdf')
 		plt.show()
 
