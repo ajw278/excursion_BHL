@@ -5,16 +5,17 @@ import wind_limits as wl
 if __name__=='__main__':
 
 	#Draw 10^5 random GMCs and plot the GMC mass function
-	#excursion.GMC_MF(Nsample=100000)
+	#excursion.GMC_MF(Nsample=10000)
+	#
 
 	#Genererate density histories for at least 10000 stars in at least 500 different regions
-	sfdb = excursion.get_density_history(Nregions=300, Nstars=5000)
+	sfdb = excursion.get_density_history(GMCmin=2.0, GMCmax=1000.0, Nregions=300, Nstars=5000, tag='_ll1')
 
 
 	#wl.construct_grid()
 
 	#For a representative sample of 500 stars, calculate the disc evolution
-	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_', wind=True, eps_wind=0.1)
+	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_'+sfdb.tag+'_', wind=False, eps_wind=0.1)
 	print('Tag:', tag)
 	
 	

@@ -113,6 +113,33 @@ class trajectory_grid():
 		self.Delta_S = np.array(self.Delta_S)
 		self.Delta_Sv = np.array(self.Delta_Sv)
 		self.tau_R = np.array(self.tau_R)
+		
+		"""plt.rc('text', usetex=True)
+		fig, ax = plt.subplots(figsize=(4,3))
+		plt.plot(self.rlevels/pc2cm, self.Delta_S/ np.cumsum(self.Delta_S), color='k', label='log. Density', linewidth=1)
+		plt.plot(self.rlevels/pc2cm, self.Delta_Sv/ np.cumsum(self.Delta_Sv), color='k', linestyle='dashed', label='Velocity', linewidth=1)
+		plt.scatter(self.rlevels/pc2cm, np.ones(self.rlevels.shape), color='k', marker='+',s=1, label='Scale grid')
+		plt.yscale('log')
+		plt.xscale('log')
+		plt.xlim([0.1, 500.0])
+		#plt.ylim([1e-24, 1e-18])
+		ax.tick_params(which='both', top=True, right=True, left=True, bottom=True, direction='in')
+		plt.ylabel('Fractional variance change (grid)')
+		plt.xlabel('Spatial scale: $\lambda$ [pc]')
+		plt.legend(loc='best')
+		plt.show()"""
+		
+		"""plt.rc('text', usetex=True)
+		fig, ax = plt.subplots(figsize=(4,3))
+		plt.plot(self.rlevels/pc2cm, self.rhocs, color='k')
+		plt.yscale('log')
+		plt.xscale('log')
+		plt.xlim([0.1, 300.0])
+		plt.ylim([1e-24, 1e-18])
+		ax.tick_params(which='both', top=True, right=True, left=True, bottom=True, direction='in')
+		plt.ylabel('Critical density: $\\rho_\mathrm{c}$ [g cm$^{-3}$]')
+		plt.xlabel('Spatial scale: $\lambda$ [pc]')
+		plt.show()"""
 
 		return None
 
@@ -300,15 +327,82 @@ Generate the mass function for giant molecular clouds, following the approach of
 In order to normalise, we estimate the turbulent time-scale on the scale height of the disc
 """	
 
-def GMC_MF(Nsample=1000,  rmax=10.*h_*pc2cm):
-	grid = trajectory_grid(rmin=0.01*pc2cm,rmax=rmax, drfact=0.95)
+def GMC_MF(Nsample=1000, rmax=10.*h_*pc2cm):
 
-	eps_SF= 0.5
+
+	grid = trajectory_grid(rmin=0.01*pc2cm, rmax=rmax, drfact=0.95)
+	qtraj = trajectory(grid=grid, dt_factor=0.1)
+	radii = [0.2*pc2cm, 0.8*pc2cm, 6*pc2cm]
+	import scipy.interpolate as interpolate
+	rcrit_func = interpolate.interp1d(qtraj.grid.rlevels, qtraj.grid.rhocs)
+	tgrid = np.linspace(0., 20.,1000)*Myr2s
+	fig, ax = plt.subplots(figsize=(5,4))
+	ax2 = ax.twinx() 
+	linestyles = ['solid', 'dashed', 'dotted']
+	for ir, radius in enumerate(radii):
+		density = rcrit_func(radius)
+		cloud = cl.fake_cloud()
+		cloud.form(density, radius, qtraj)
+		for it, t in enumerate(tgrid):
+			cloud.evolve(t)
+		ax.plot(cloud.tclouds/Myr2s, cloud.rho_meds, color='k', linewidth=1, linestyle=linestyles[ir], label='$M_\mathrm{GMC} = %.2e \, M_\odot$'%(np.amax(cloud.Mclouds)/Msol2g))
+		ax2.plot(cloud.tclouds/Myr2s, cloud.msts/cloud.msts[-1], color='r', linewidth=1, linestyle=linestyles[ir])
+
+
+	ax.set_yscale('log')
+	ax2.set_yscale('log')
+	ax.set_ylim([1e-23, 5e-20])
+	ax2.set_ylim([1e-2, 1.1])
+	ax2.set_ylabel('Cumulative fraction of star formation')
+	ax.set_ylabel('Mean density of SFR [g cm$^{-3}$]')
+	ax.set_xlabel('Time [Myr]')
+	#plt.xscale('log')
+	plt.xlim([0., 3.5])
+	ax.legend(loc='best')
+	ax.tick_params(which='both', top=True, right=False, left=True, bottom=True, direction='out')
+	plt.savefig('totaldensity_SFR.pdf', bbox_inches='tight',format='pdf')
+	plt.show()
+
+
+	plt.rc('text', usetex=True)
+	fig, ax = plt.subplots(figsize=(4.5,4))
+	
+	grid = trajectory_grid(rmin=0.01*pc2cm, rmax=rmax, drfact=0.1)
+
+	plt.plot(grid.rlevels/pc2cm, grid.Delta_S/ np.cumsum(grid.Delta_S), color='blue', label='$\Delta R/R = 0.1$', linewidth=1)
+	plt.plot(grid.rlevels/pc2cm, grid.Delta_Sv/ np.cumsum(grid.Delta_Sv), color='blue', linestyle='dashed', linewidth=1)
+	plt.scatter(grid.rlevels/pc2cm, 2.*np.ones(grid.rlevels.shape), color='blue', marker='+',s=1)
+	
+	grid = trajectory_grid(rmin=0.01*pc2cm, rmax=rmax, drfact=0.5)
+	
+	plt.plot(grid.rlevels/pc2cm, grid.Delta_S/ np.cumsum(grid.Delta_S), color='red', label='$\Delta R/R = 0.5$', linewidth=1)
+	plt.plot(grid.rlevels/pc2cm, grid.Delta_Sv/ np.cumsum(grid.Delta_Sv), color='red', linestyle='dashed',  linewidth=1)
+	plt.scatter(grid.rlevels/pc2cm, np.ones(grid.rlevels.shape), color='red', marker='+',s=1)
+	
+	grid = trajectory_grid(rmin=0.01*pc2cm, rmax=rmax, drfact=0.95)
+	
+	plt.plot(grid.rlevels/pc2cm, grid.Delta_S/ np.cumsum(grid.Delta_S), color='k', label='$\Delta R/R = 0.95$', linewidth=1)
+	plt.plot([], [], color='k', label='log. Density', linewidth=1)
+	plt.plot(grid.rlevels/pc2cm, grid.Delta_Sv/ np.cumsum(grid.Delta_Sv), color='k', linestyle='dashed', label='Velocity', linewidth=1)
+	plt.scatter(grid.rlevels/pc2cm, 0.5*np.ones(grid.rlevels.shape), color='k', marker='+',s=1, label='Scale grid')
+	
+	plt.yscale('log')
+	plt.xscale('log')
+	plt.xlim([0.1, 300.0])
+	plt.axvline(grid.h/pc2cm,  color='k', linestyle='dotted', linewidth=1, label='Galactic scale height')
+	plt.ylim([1e-5, 3.0])
+	ax.tick_params(which='both', top=True, right=True, left=True, bottom=True, direction='in')
+	plt.ylabel('Fractional variance change: $\Delta S/S$')
+	plt.xlabel('Turbulent scale: $R$ [pc]')
+	plt.legend(loc='best', fontsize=8, ncols=2)
+	ax.tick_params(which='both', top=True, right=True, left=True, bottom=True, direction='in')
+	plt.savefig('deltaS_S.pdf', bbox_inches='tight', format='pdf')
+	plt.show()
+
+	eps_SF = 0.5
 	tcross = (h_*pc2cm)/(sigvh_*1e5)/Myr2s
 
-
-	qtraj = trajectory(grid=grid,  dt_factor=0.1)
-
+	qtraj = trajectory(grid=grid, dt_factor=0.1)
 
 	m = np.zeros(Nsample)
 	ms = np.zeros(Nsample)
@@ -319,65 +413,59 @@ def GMC_MF(Nsample=1000,  rmax=10.*h_*pc2cm):
 	iformed = np.zeros(Nsample, dtype=bool)
 	ntry = 0
 	for iN in range(Nsample):
-		qtraj = trajectory(grid=grid,  dt_factor=0.1)
-		ntry+=1
+		print(iN)
+		qtraj = trajectory(grid=grid, dt_factor=0.1)
+		ntry += 1
 		while not qtraj.cloud.formed:
 			qtraj.resample_all(0)
-			ntry+=1
-		ms[iN] = eps_SF*qtraj.cloud.M/Msol2g
-		#qtraj.evolve(terminate='form')
-		m[iN] = qtraj.cloud.M/Msol2g
-		r[iN] = qtraj.cloud.R/pc2cm
-		t[iN] = qtraj.cloud.tform/Myr2s
-		tcross_arr[iN] = qtraj.grid.tau_R[qtraj.cloud.icol]/Myr2s
-		rho[iN] = qtraj.cloud.rho_med*(pc2cm)**3/Msol2g
-		#if t[iN]>0.0:
-		iformed[iN]=True
-	
-	
+			ntry += 1
+	ms[iN] = eps_SF * qtraj.cloud.M / Msol2g
+	m[iN] = qtraj.cloud.M / Msol2g
+	r[iN] = qtraj.cloud.R / pc2cm
+	t[iN] = qtraj.cloud.tform / Myr2s
+	tcross_arr[iN] = qtraj.grid.tau_R[qtraj.cloud.icol] / Myr2s
+	rho[iN] = qtraj.cloud.rho_med * (pc2cm)**3 / Msol2g
+	iformed[iN] = True
+
 	trange = 10.0
 	rrange = 200.0
-	rate_norm = (1./8.)*(0.333*4.*np.pi*rrange**3)*trange*1.0/ntry
-	
+	rate_norm = (1./8.) * (0.333 * 4. * np.pi * rrange**3) * trange * 1.0 / ntry
+
 	mbins = np.logspace(-0.5, 8., 80)
-	bcents = (mbins[1:]+mbins[:-1])/2.
-	
-	npuv =  np.zeros(mbins.shape)
+	bcents = (mbins[1:] + mbins[:-1]) / 2.
+
+	npuv = np.zeros(mbins.shape)
 	npuv_st = np.zeros(mbins.shape)
-	
-	weight = (rho/m)*(1./tcross)
+	npuv_err = np.zeros(mbins.shape)
+	npuv_st_err = np.zeros(mbins.shape)
+
+	weight = (rho / m) * (1. / tcross)
 	for ith, threshold in enumerate(mbins):
-		itmp = m>threshold
-		
-		npuv[ith] = np.sum(itmp*weight)
-		itmp_st = ms>threshold
-		
-		npuv_st[ith] = np.sum(itmp_st*weight)
-	
+		itmp = m > threshold
+		npuv[ith] = np.sum(itmp * weight)
+	npuv_err[ith] = np.sqrt(np.sum((itmp * weight)**2))
+
+	itmp_st = ms > threshold
+	npuv_st[ith] = np.sum(itmp_st * weight)
+	npuv_st_err[ith] = np.sqrt(np.sum((itmp_st * weight)**2))
+
 	npuv *= rate_norm
 	npuv_st *= rate_norm
-	
-	
+	npuv_err *= rate_norm
+	npuv_st_err *= rate_norm
+
 	fig, ax = plt.subplots(figsize=(5, 5))
 
-	# Scatter plots
-	plt.scatter(mbins, npuv, label='GMCs', s=10, alpha=0.7)  # smaller points
-	plt.scatter(mbins, npuv_st, label='Stars w/ $\epsilon = %.1lf$'%eps_SF, s=10, alpha=0.7)  # smaller points
-
-	# Line plot
-	#plt.plot(mbins, 20.0 * (mbins / 100.)**-1., label=r'$\beta = -1$', linewidth=1, color='k')  
-	#plt.plot(bcents, 100.0 * (bcents / 100.)**-1.8, label=r'$\beta = -1.9$', linewidth=1, color='k', linestyle='dashed')  
+	# Scatter plots with error bars
+	plt.errorbar(mbins, npuv, yerr=npuv_err, label='GMCs', fmt='o', markersize=3, alpha=0.7, capsize=3)
+	plt.errorbar(mbins, npuv_st, yerr=npuv_st_err, label='Stars w/ $\epsilon = %.1lf$' % eps_SF, fmt='o', markersize=3, alpha=0.7, capsize=3)
 
 	plt.xscale('log')
 	plt.yscale('log')
 
-	# Highlight region between 0.1 and 10 on the y-axis
-	ax.axhspan(10.0,2000.0, color='yellow', alpha=0.3)
-	# Highlight region between 0.1 and 10 on the y-axis
+	ax.axhspan(10.0, 2000.0, color='yellow', alpha=0.3)
 	ax.axvspan(10.0, 500.0, color='cyan', alpha=0.2)
 
-	# Add label to the shaded region
-	# Add label to the shaded region
 	label_x = 1e4  # x-coordinate of the label
 	label_y = 30.0 # y-coordinate of the label
 	ax.text(label_x, label_y, 'Locally well-sampled', fontsize=12, ha='left', va='center')
@@ -392,27 +480,27 @@ def GMC_MF(Nsample=1000,  rmax=10.*h_*pc2cm):
 	plt.ylabel('\# Regions, mass $>M$ , age $<%d$ Myr within $%d$ pc' % (trange, rrange))
 	plt.xlabel('Mass: $M$ [$M_\odot$]')
 
-	# Legend
 	plt.legend(loc='best')
 
-	# Tick parameters
 	ax.tick_params(which='both', top=True, right=True, left=True, bottom=True, direction='in')
 
-	plt.savefig('region_selection.pdf', bbox_inches='tight', format='pdf')
+	plt.savefig('region_selection_with_error_bars.pdf', bbox_inches='tight', format='pdf')
 	plt.show()
 
 """
 get_density_history
 Get the BHL accretion rate histories for stars for a representative sample of GMCs
 """
-def get_density_history(GMCmin=10.0, GMCmax=1000.0, Nregions=200, Nstars=2000, probnorm=1e22, dt_fact=0.02, rmax=4.*h_*pc2cm):
+def get_density_history(GMCmin=10.0, GMCmax=1000.0, Nregions=200, Nstars=2000, probnorm=5e20, dt_fact=0.02, rmax=5.*h_*pc2cm, tag=''):
 
-	sfdb = sfrdb.sfr_database()
+	sfdb = sfrdb.sfr_database(tag=tag)
 	grid = trajectory_grid(rmax=rmax, rmin=0.01*pc2cm, drfact=0.95)
 	ntry= 0
 	nstars = sfdb.nstars
 	nregions = sfdb.nregions
+	imc = 0
 	while (nstars<Nstars) or nregions<Nregions:
+		imc+=1
 		qtraj = trajectory(grid=grid,  dt_factor=dt_fact)
 		icol = qtraj.icol 
 		mcloud = qtraj.cloud.M/Msol2g
@@ -426,6 +514,7 @@ def get_density_history(GMCmin=10.0, GMCmax=1000.0, Nregions=200, Nstars=2000, p
 		prob = probnorm*(qtraj.cloud.rho_med_crit/mcloud)
 		urand = np.random.uniform()
 		if urand<prob:
+			print('Mcloud, probability:',mcloud, prob)
 			#Form a star forming region
 			sfr= sfr_c.star_forming_region(qtraj)
 			out = sfr.get_BHL_history()
@@ -437,10 +526,12 @@ def get_density_history(GMCmin=10.0, GMCmax=1000.0, Nregions=200, Nstars=2000, p
 
 			print('Total number of stars', nstars)
 			print('Total number of regions', nregions)
-
+			
+		
+		if imc%1000==0:
+			print('imc', imc)
 
 	return sfdb
-
 
 
 	

@@ -26,10 +26,12 @@ Compute the accretion histories and disc properties of star-disc systems and sav
 This also includes plotting routines
 """
 class sfr_database():
-		def __init__(self, fname=None):
+		def __init__(self, fname=None, tag=''):
 			if fname is None:
 				fname = 'sfr_database'
+			fname+='_'+tag
 			self.fname=fname
+			self.tag = tag
 			if not self.load():
 				self.nstars = 0
 				self.nregions = 0
