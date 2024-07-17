@@ -29,7 +29,8 @@ class sfr_database():
 		def __init__(self, fname=None, tag=''):
 			if fname is None:
 				fname = 'sfr_database'
-			fname+='_'+tag
+			if tag!='':
+				fname+='_'+tag
 			self.fname=fname
 			self.tag = tag
 			if not self.load():

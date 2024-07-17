@@ -16,7 +16,7 @@ if __name__=='__main__':
 	#wl.construct_grid()
 
 	#For a representative sample of 500 stars, calculate the disc evolution
-	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_'+sfdb.tag+'_', wind=False, eps_wind=0.1)
+	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_', wind=False, eps_wind=0.1)
 	print('Tag:', tag)
 	
 	
