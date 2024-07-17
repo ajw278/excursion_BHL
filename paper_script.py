@@ -14,6 +14,8 @@ if __name__=='__main__':
 
 	#wl.construct_grid()
 
+
+	print('\n\n *******Lower SFR mass*******\n\n')
 	#For a representative sample of 500 stars, calculate the disc evolution
 	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_'+sfdb.tag+'_', wind=False, eps_wind=0.1)
 	print('Tag:', tag)
@@ -38,6 +40,9 @@ if __name__=='__main__':
 
 	#wl.construct_grid()
 
+
+	print('\n\n *******Fiducial*******\n\n')
+
 	#For a representative sample of 500 stars, calculate the disc evolution
 	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_', wind=False, eps_wind=0.1)
 	print('Tag:', tag)
@@ -57,6 +62,7 @@ if __name__=='__main__':
 	sfdb.plot_vturb(tag=tag)
 	sfdb.plot_Next(tag=tag)
 
+	print('\n\n *******IC disc vary, no wind *******\n\n')
 	
 
 	#Test results for a substantial initial disc mass
@@ -66,6 +72,8 @@ if __name__=='__main__':
 	sfdb.plot_all(tag=tag)
 	sfdb.plot_rplf(tag=tag)
 
+
+	print('\n\n *******Wind, 0 initial disc mass*******\n\n')
 
 
 	#Test results for a substantial initial disc mass
