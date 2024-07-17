@@ -234,11 +234,13 @@ class sfr_database():
 			iall = np.arange(len(m_star))
 
 			for im , m_ in enumerate(m_star):
-			
+				fm =fracmdisc[idt, im]
+				fm[fm>1.] =1.
+				fm[fm<0.] = 0.0
 				if im in iinc:
 					#axs[0].plot(time, fracmdisc[idt, im],   color=cmap(normalize(np.log10(mdisc[idt, im, :]/m_))), linewidth=1, alpha=0.2)
 					
-					points = np.array([time, fracmdisc[idt, im]]).T.reshape(-1, 1, 2)
+					points = np.array([time, fm]).T.reshape(-1, 1, 2)
 					segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
 					lc = LineCollection(segments, cmap='viridis', norm=normalize)
@@ -247,7 +249,9 @@ class sfr_database():
 					lc.set_linewidth(1.0)
 					line = axs[0].add_collection(lc)
 				else:
-					points = np.array([time, fracmdisc[idt, im]]).T.reshape(-1, 1, 2)
+					points = np.array([time, fm]).T.reshape(-1, 1, 2)
+
+					
 					segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
 					lc = LineCollection(segments, cmap='viridis', norm=normalize, alpha=0.1)
@@ -292,6 +296,13 @@ class sfr_database():
 			axs[1].tick_params(which='both', right=True, left=True, top=True, bottom=True)
 			axs[1].legend(loc=2, fontsize=8)
 			plt.savefig('hlrf'+tag+'.png', bbox_inches='tight', format='png', dpi=500)
+			plt.show()
+
+			for im , m_ in enumerate(m_star):
+			
+				if im in iinc:
+					plt.scatter(mdisc[idt, im], fracmdisc[idt, im])
+			plt.savefig('test.pdf', format='pdf')
 			plt.show()
 			
 		
