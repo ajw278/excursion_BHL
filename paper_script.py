@@ -38,10 +38,6 @@ if __name__=='__main__':
 	#Genererate density histories for at least 10000 stars in at least 500 different regions
 	sfdb = excursion.get_density_history(GMCmin=10.0, GMCmax=1000.0, Nregions=300, Nstars=5000, tag='')
 
-	#wl.construct_grid()
-	print(dir(sfdb))
-	exit()
-
 	print('\n\n *******Fiducial*******\n\n')
 
 	#For a representative sample of 500 stars, calculate the disc evolution

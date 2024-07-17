@@ -647,9 +647,9 @@ class sfr_database():
 			if minit>0.0:
 				print(self.tags)
 				tag += '_minit_%.2lf'%minit
-				print(tag)
 				if minitdisp>0.0:
 					tag += '_mdisp_%.2lf'%minitdisp
+				print(tag)
 			if wind:
 				tag += '_wind'
 			
