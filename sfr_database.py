@@ -641,9 +641,10 @@ class sfr_database():
 		def calc_discevol(self, redraw=True, Nsample=1, maxtres=20000, minit=0.0, minitdisp=0.0, mlim=250., ptag='', wind=False, eps_wind=0.1):
 
 			tag = ptag
+
+			if not hasattr(self, 'tags'):
+				self.tags  = [] 
 			if minit>0.0:
-				if not hasattr(self, 'tags'):
-					self.tags  = [] 
 				print(self.tags)
 				tag += '_minit_%.2lf'%minit
 				print(tag)
