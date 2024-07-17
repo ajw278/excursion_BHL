@@ -646,12 +646,15 @@ class sfr_database():
 					self.tags  = [] 
 				print(self.tags)
 				tag += '_minit_%.2lf'%minit
+				print(tag)
 				if minitdisp>0.0:
 					tag += '_mdisp_%.2lf'%minitdisp
-				if not tag in self.tags:
-					self.tags.append(tag)
 			if wind:
 				tag += '_wind'
+			
+			if not tag in self.tags:
+				self.tags.append(tag)
+			
 			if not hasattr(self, 'idiscevol'+tag) or redraw:
 				setattr(self, 'idiscevol'+tag, self.draw_representative_sample(Nsample, mreglim=mlim))
 
