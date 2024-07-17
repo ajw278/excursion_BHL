@@ -24,7 +24,6 @@ def mdot_tacc(Mdot_BHL, R_BHL, teval_, tarr_, dts, mstars, rho_BHL, dv_BHL, plot
 	v_amb = np.zeros(mdot_star.shape)
 	mdot_BHL = np.zeros(mdot_star.shape)
 	
-	mstars[0] = 1.0*Msol2g
 	if plot:
 		fig, ax = plt.subplots(figsize=(5.,4.))
 	for ikern, dt_ in enumerate(dts):
