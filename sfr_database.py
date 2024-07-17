@@ -298,10 +298,16 @@ class sfr_database():
 			plt.savefig('hlrf'+tag+'.png', bbox_inches='tight', format='png', dpi=500)
 			plt.show()
 
+			fig, ax = plt.subplots(figsize=(4.,4.))
+
 			for im , m_ in enumerate(m_star):
 			
 				if im in iinc:
-					plt.scatter(mdisc[idt, im], fracmdisc[idt, im])
+					plt.scatter(mdisc[idt, im, ::10], fracmdisc[idt, im,::10], color='k', s=1)
+					plt.scatter(-mdisc[idt, im, ::10], -fracmdisc[idt, im,::10], color='r', s=1)
+					plt.scatter(-mdisc[idt, im,::10], fracmdisc[idt, im,::10], color='b', s=1)
+			plt.yscale('log')
+			plt.xscale('log')
 			plt.savefig('test.pdf', format='pdf')
 			plt.show()
 			
