@@ -256,7 +256,7 @@ class sfr_database():
 					line = axs[0].add_collection(lc)
 						
 			db = 0.025
-			bins = np.arange(0., 1.+db, db)
+			bins = np.arange(-0.1, 1.1+db, db)
 			for it, t in enumerate(tplot):
 				itime = np.argmin(np.absolute(time - t))
 				
