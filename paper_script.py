@@ -5,11 +5,12 @@ import wind_limits as wl
 if __name__=='__main__':
 
 	#Draw 10^5 random GMCs and plot the GMC mass function
-	#excursion.GMC_MF(Nsample=10000)
+	excursion.GMC_MF(Nsample=10000)
+	exit()
 	#
 
 	#Genererate density histories for at least 10000 stars in at least 500 different regions
-	sfdb = excursion.get_density_history(GMCmin=2.0, GMCmax=1000.0, Nregions=300, Nstars=5000, tag='_ll1')
+	sfdb = excursion.get_density_history(GMCmin=2.0, GMCmax=1000.0, Nregions=1000, Nstars=10000, tag='_ll1')
 
 
 	#wl.construct_grid()

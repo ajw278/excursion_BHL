@@ -229,9 +229,11 @@ class sfr_database():
 			fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(7, 4), gridspec_kw={'width_ratios': [5., 4.0]}, sharey='row')
 			
 			normalize = plt.Normalize(-6., -2.)
-			iinc = np.random.choice(np.arange(len(m_star)), size=min(100, len(m_star)), replace=False)
+			iinc = np.random.choice(np.arange(len(m_star)), size=min(20, len(m_star)), replace=False)
+			iall = np.arange(len(m_star))
 
 			for im , m_ in enumerate(m_star):
+			
 				if im in iinc:
 					#axs[0].plot(time, fracmdisc[idt, im],   color=cmap(normalize(np.log10(mdisc[idt, im, :]/m_))), linewidth=1, alpha=0.2)
 					
@@ -239,6 +241,15 @@ class sfr_database():
 					segments = np.concatenate([points[:-1], points[1:]], axis=1)
 
 					lc = LineCollection(segments, cmap='viridis', norm=normalize)
+					# Set the values used for colormapping
+					lc.set_array(np.log10(mdisc[idt, im, :]/m_))
+					lc.set_linewidth(1.0)
+					line = axs[0].add_collection(lc)
+				else:
+					points = np.array([time, fracmdisc[idt, im]]).T.reshape(-1, 1, 2)
+					segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+					lc = LineCollection(segments, cmap='viridis', norm=normalize, alpha=0.1)
 					# Set the values used for colormapping
 					lc.set_array(np.log10(mdisc[idt, im, :]/m_))
 					lc.set_linewidth(0.3)
@@ -268,7 +279,7 @@ class sfr_database():
 
 			axs[0].set_xlim([0.5, int(time[-1]+0.5)])
 			
-			axs[0].set_ylim([0., 1.0])
+			axs[0].set_ylim([-0.05, 1.05])
 
 			axs[1].set_xticks([0., 0.25, 0.5, 0.75, 1.0])
 			axs[1].set_yticks(np.arange(0.,1.1, 0.1))
@@ -368,11 +379,12 @@ class sfr_database():
 			norm = plt.Normalize(min(np.log10(tplot)), max(np.log10(tplot)))  # Normalize colormap based on tplot range
 			scalar_map = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
 
+			colors = ['pink', 'k']
 			plt.figure(figsize=(6, 5))
 			for i in range(len(regions)):
 
 
-				color=  CB_color_cycle[i]
+				color=  colors[i]
 
 				region_age = regions[i] 
 				ms_obs, mdot_obs, md_obs, imeas_, iupper_, rd_ = self.fetch_obs(region_age,ax=None, plot=False)
@@ -684,8 +696,6 @@ class sfr_database():
 				eps_wind = getattr(self, 'eps_wind'+tag)
 				
 				
-				disc_mass, mdot_star, frac_tend, disc_radius, disc_vt, mdot_BHL, rho_BHL, dv_BHL = de.mdot_tacc(Mda[:1], Ra[:1], teval_, ta[:1], [0.1*Myr2s, 0.3*Myr2s,1.0*Myr2s] , mst[:1], drhoa[:1], dva[:1], plot=True, mu=-.5, fM=minit, fM_disp=minitdisp,sigma=1.0, wind=wind, eps_wind=eps_wind)
-				exit()
 				disc_mass, mdot_star, frac_tend, disc_radius, disc_vt, mdot_BHL, rho_BHL, dv_BHL = de.mdot_tacc(Mda, Ra, teval_, ta, dt_, mst, drhoa, dva, plot=False, mu=-.5, fM=minit, fM_disp=minitdisp,sigma=1.0, wind=wind, eps_wind=eps_wind)
 					
 				

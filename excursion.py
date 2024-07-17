@@ -345,7 +345,7 @@ def GMC_MF(Nsample=1000, rmax=10.*h_*pc2cm):
 		cloud.form(density, radius, qtraj)
 		for it, t in enumerate(tgrid):
 			cloud.evolve(t)
-		ax.plot(cloud.tclouds/Myr2s, cloud.rho_meds, color='k', linewidth=1, linestyle=linestyles[ir], label='$M_\mathrm{GMC} = %.2e \, M_\odot$'%(np.amax(cloud.Mclouds)/Msol2g))
+		ax.plot(cloud.tclouds/Myr2s, cloud.rho_meds, color='k', linewidth=1, linestyle=linestyles[ir], label='$M_\mathrm{SFR} = %.2e \, M_\odot$'%(np.amax(cloud.Mclouds)/Msol2g))
 		ax2.plot(cloud.tclouds/Myr2s, cloud.msts/cloud.msts[-1], color='r', linewidth=1, linestyle=linestyles[ir])
 
 
@@ -353,13 +353,15 @@ def GMC_MF(Nsample=1000, rmax=10.*h_*pc2cm):
 	ax2.set_yscale('log')
 	ax.set_ylim([1e-23, 5e-20])
 	ax2.set_ylim([1e-2, 1.1])
-	ax2.set_ylabel('Cumulative fraction of star formation')
+	ax2.set_ylabel('Cumulative fraction of star formation', color='red')
 	ax.set_ylabel('Mean density of SFR [g cm$^{-3}$]')
 	ax.set_xlabel('Time [Myr]')
 	#plt.xscale('log')
 	plt.xlim([0., 3.5])
 	ax.legend(loc='best')
 	ax.tick_params(which='both', top=True, right=False, left=True, bottom=True, direction='out')
+
+	ax2.tick_params(axis='y', labelcolor='tab:red')
 	plt.savefig('totaldensity_SFR.pdf', bbox_inches='tight',format='pdf')
 	plt.show()
 
