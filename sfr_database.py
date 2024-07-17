@@ -29,7 +29,7 @@ class sfr_database():
 		def __init__(self, fname=None, tag=''):
 			if fname is None:
 				fname = 'sfr_database'
-			if tag!='':
+			if tag!='': 
 				fname+='_'+tag
 			self.fname=fname
 			self.tag = tag
@@ -644,6 +644,7 @@ class sfr_database():
 			if minit>0.0:
 				if not hasattr(self, 'tags'):
 					self.tags  = [] 
+				print(self.tags)
 				tag += '_minit_%.2lf'%minit
 				if minitdisp>0.0:
 					tag += '_mdisp_%.2lf'%minitdisp
