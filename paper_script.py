@@ -44,8 +44,9 @@ if __name__=='__main__':
 
 
 	#Test results for a substantial initial disc mass
-	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, ptag='m250_', wind=True, eps_wind=0.1)
+	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_', wind=True, eps_wind=0.1)
 
+	sfdb.plot_discfrac_msplit(tag=tag)
 	sfdb.plot_accretion_rates_wevap(tag=tag)
 	sfdb.plot_all(tag=tag)
 	sfdb.plot_rplf(tag=tag)
@@ -59,14 +60,15 @@ if __name__=='__main__':
 	
 	
 	#Plot the BHL accretion rate histories
-	sfdb.plot_accretion_rates_wevap(tag=tag)
-
-	sfdb.plot_discfrac_msplit(tag=tag)
+	sfdb.plot_accretion_rates(tag=tag)
+	sfdb.plot_mcdfs(tag=tag)
 	#Plot the BHL accretion rate histories
 	#sfdb.plot_accretion_rates()
 
 	#Make the plots for the paper
 	sfdb.plot_discfrac(tag=tag)
+	sfdb.plot_discfrac(tag=tag, mlim=1e-4, label='_ml-4')
+	sfdb.plot_discfrac(tag=tag, mlim=1e-5, label='_ml-5')
 	sfdb.plot_rplf(tag=tag)
 	sfdb.plot_all(tag=tag)
 	sfdb.plot_vturb(tag=tag)
@@ -78,8 +80,8 @@ if __name__=='__main__':
 	
 
 	#Test results for a substantial initial disc mass
-	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.01, minitdisp=1.0, ptag='m250_', wind=False, eps_wind=0.1)
+	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.01, minitdisp=1.0, mlim=250., ptag='m250_', wind=False, eps_wind=0.1)
 
-	sfdb.plot_accretion_rates_wevap(tag=tag)
+	sfdb.plot_accretion_rates(tag=tag)
 	sfdb.plot_all(tag=tag)
 	sfdb.plot_rplf(tag=tag)

@@ -147,7 +147,7 @@ class sfr_database():
 			plt.show()
 
 
-		def plot_discfrac(self, mlim=mllim, mstlim=0.1, tag=''):
+		def plot_discfrac(self, mlim=mllim, mstlim=0.1, tag='', label=''):
 
 			iinc = np.array(getattr(self, 'mstevol'+tag))/Msol2g>mstlim
 			md = getattr(self, 'mdiscevol'+tag)[0][iinc]/Msol2g
@@ -170,7 +170,7 @@ class sfr_database():
 			plt.xlim([0., 8.])
 			plt.legend(loc='best')
 			ax.tick_params(which='both', top=True, right=True, bottom=True, left=True)
-			plt.savefig('disc_fraction'+tag+'.pdf', bbox_inches='tight', format='pdf')
+			plt.savefig('disc_fraction'+tag+label+'.pdf', bbox_inches='tight', format='pdf')
 			plt.show()
 		
 		def plot_discfrac_msplit(self, mlim=mllim, mstlim=0.1, tag='', mbins = [0.1, 0.3, 1.0, np.inf]):
