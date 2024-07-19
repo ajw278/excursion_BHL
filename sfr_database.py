@@ -152,7 +152,7 @@ class sfr_database():
 				
 				iinc = np.array(getattr(self, 'mstevol'+tag))/Msol2g>mstlim
 				
-
+				lss = ['dashed', 'solid', 'dotted']
 				fig, ax = plt.subplots(figsize=(6.,4.))
 			
 				for im, mlim in enumerate(rmlim):
@@ -161,9 +161,9 @@ class sfr_database():
 					iab = md>mlim
 
 					dfrac = np.sum(iab, axis=0)/float(len(md))
-					plt.plot(tde, dfrac, color=CB_color_cycle[im], linewidth=1, label='$> %d \\times 10^{-5} \, M_\odot$'%(mlim/1e-5))
+					plt.plot(tde, dfrac, color='k', linestyle=lss[im], linewidth=1, label='$> %d \\times 10^{-5} \, M_\odot$'%(mlim/1e-5))
 
-				plt.ylabel('Disc fraction ($M_\mathrm{disc} > %d \\times 10^{-5} \, M_\odot$) for $m_* > %.1lf \, M_\odot$'%(mlim/1e-5, mstlim))
+				plt.ylabel('Disc fraction for $m_* > %.1lf \, M_\odot$'%(mstlim))
 				plt.xlabel('Age [Myr]')
 				tsp = np.linspace(0., 8.)
 				plt.plot(tsp, np.exp(-tsp/3.), color='b',linewidth=1, label='$\\tau_\mathrm{disc} = 3$ Myr')

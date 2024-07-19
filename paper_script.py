@@ -66,7 +66,7 @@ if __name__=='__main__':
 	#sfdb.plot_accretion_rates()
 
 	#Make the plots for the paper
-	sfdb.plot_discfrac(tag=tag, rmlim=[1e-5, 3e-5, 9e-5])
+	sfdb.plot_discfrac(tag=tag, rmlim=[1e-5, 3e-5, 9e-5], label='_mlv')
 	sfdb.plot_rplf(tag=tag)
 	sfdb.plot_all(tag=tag)
 	sfdb.plot_vturb(tag=tag)
