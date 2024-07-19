@@ -147,31 +147,60 @@ class sfr_database():
 			plt.show()
 
 
-		def plot_discfrac(self, mlim=mllim, mstlim=0.1, tag='', label=''):
+		def plot_discfrac(self, mlim=mllim, mstlim=0.1, tag='', label='', rmlim=None):
+			if not rmlim is None:
+				
+				iinc = np.array(getattr(self, 'mstevol'+tag))/Msol2g>mstlim
+				
 
-			iinc = np.array(getattr(self, 'mstevol'+tag))/Msol2g>mstlim
-			md = getattr(self, 'mdiscevol'+tag)[0][iinc]/Msol2g
-			tde = np.array(getattr(self, 'tdiscevol'+tag))/Myr2s
-			iab = md>mlim
+				fig, ax = plt.subplots(figsize=(6.,4.))
+			
+				for im, mlim in enumerate(rmlim):
+					md = getattr(self, 'mdiscevol'+tag)[0][iinc]/Msol2g
+					tde = np.array(getattr(self, 'tdiscevol'+tag))/Myr2s
+					iab = md>mlim
 
-			dfrac = np.sum(iab, axis=0)/float(len(md))
+					dfrac = np.sum(iab, axis=0)/float(len(md))
+					plt.plot(tde, dfrac, color=CB_color_cycle[im], linewidth=1, label='$> %d \\times 10^{-5} \, M_\odot$'%(mlim/1e-5))
 
-			fig, ax = plt.subplots(figsize=(6.,4.))
-			plt.plot(tde, dfrac, color='k', linewidth=1)
-
-			plt.ylabel('Disc fraction ($M_\mathrm{disc} > %d \\times 10^{-5} \, M_\odot$) for $m_* > %.1lf \, M_\odot$'%(mlim/1e-5, mstlim))
-			plt.xlabel('Age [Myr]')
-			tsp = np.linspace(0., 8.)
-			plt.plot(tsp, np.exp(-tsp/3.), color='b',linewidth=1, label='$\\tau_\mathrm{disc} = 3$ Myr')
-			plt.plot(tsp, np.exp(-tsp/5.), color='r', linewidth=1, label='$\\tau_\mathrm{disc} = 5$ Myr')
+				plt.ylabel('Disc fraction ($M_\mathrm{disc} > %d \\times 10^{-5} \, M_\odot$) for $m_* > %.1lf \, M_\odot$'%(mlim/1e-5, mstlim))
+				plt.xlabel('Age [Myr]')
+				tsp = np.linspace(0., 8.)
+				plt.plot(tsp, np.exp(-tsp/3.), color='b',linewidth=1, label='$\\tau_\mathrm{disc} = 3$ Myr')
+				plt.plot(tsp, np.exp(-tsp/5.), color='r', linewidth=1, label='$\\tau_\mathrm{disc} = 5$ Myr')
 
 
-			plt.ylim([0.,1.])
-			plt.xlim([0., 8.])
-			plt.legend(loc='best')
-			ax.tick_params(which='both', top=True, right=True, bottom=True, left=True)
-			plt.savefig('disc_fraction'+tag+label+'.pdf', bbox_inches='tight', format='pdf')
-			plt.show()
+				plt.ylim([0.,1.])
+				plt.xlim([0., 8.])
+				plt.legend(loc='best')
+				ax.tick_params(which='both', top=True, right=True, bottom=True, left=True)
+				plt.savefig('disc_fraction'+tag+label+'.pdf', bbox_inches='tight', format='pdf')
+				plt.show()
+			
+			else:
+				iinc = np.array(getattr(self, 'mstevol'+tag))/Msol2g>mstlim
+				md = getattr(self, 'mdiscevol'+tag)[0][iinc]/Msol2g
+				tde = np.array(getattr(self, 'tdiscevol'+tag))/Myr2s
+				iab = md>mlim
+
+				dfrac = np.sum(iab, axis=0)/float(len(md))
+
+				fig, ax = plt.subplots(figsize=(6.,4.))
+				plt.plot(tde, dfrac, color='k', linewidth=1)
+
+				plt.ylabel('Disc fraction ($M_\mathrm{disc} > %d \\times 10^{-5} \, M_\odot$) for $m_* > %.1lf \, M_\odot$'%(mlim/1e-5, mstlim))
+				plt.xlabel('Age [Myr]')
+				tsp = np.linspace(0., 8.)
+				plt.plot(tsp, np.exp(-tsp/3.), color='b',linewidth=1, label='$\\tau_\mathrm{disc} = 3$ Myr')
+				plt.plot(tsp, np.exp(-tsp/5.), color='r', linewidth=1, label='$\\tau_\mathrm{disc} = 5$ Myr')
+
+
+				plt.ylim([0.,1.])
+				plt.xlim([0., 8.])
+				plt.legend(loc='best')
+				ax.tick_params(which='both', top=True, right=True, bottom=True, left=True)
+				plt.savefig('disc_fraction'+tag+label+'.pdf', bbox_inches='tight', format='pdf')
+				plt.show()
 		
 		def plot_discfrac_msplit(self, mlim=mllim, mstlim=0.1, tag='', mbins = [0.1, 0.3, 1.0, np.inf]):
 			mst_all =np.array(getattr(self, 'mstevol'+tag))
