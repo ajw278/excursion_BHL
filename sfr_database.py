@@ -239,7 +239,7 @@ class sfr_database():
 			plt.savefig('disc_fraction_msplit'+tag+'.pdf', bbox_inches='tight', format='pdf')
 			plt.show()
 			
-		def plot_rplf(self, mlim=mllim,tplot = [1.0, 2., 3.0, 8.0], mstllim=0.1,mstulim=np.inf, idt=0, tag=''):
+		def plot_rplf(self, mlim=mllim,tplot = [1.0, 2., 3.0, 8.0], mstllim=0.1,mstulim=np.inf, idt=0, tag='', label_=''):
 			m_star = np.array(getattr(self, 'mstevol'+tag))/Msol2g
 			time = np.array(getattr(self, 'tdiscevol'+tag))/Myr2s
 
@@ -324,7 +324,7 @@ class sfr_database():
 			axs[0].tick_params(which='both', right=True, left=True, top=True, bottom=True)
 			axs[1].tick_params(which='both', right=True, left=True, top=True, bottom=True)
 			axs[1].legend(loc=2, fontsize=8)
-			plt.savefig('hlrf'+tag+'.png', bbox_inches='tight', format='png', dpi=500)
+			plt.savefig('hlrf'+tag+label_+'.png', bbox_inches='tight', format='png', dpi=500)
 			plt.show()
 
 			fig, ax = plt.subplots(figsize=(4.,4.))

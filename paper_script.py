@@ -65,6 +65,7 @@ if __name__=='__main__':
 	#Plot the BHL accretion rate histories
 	#sfdb.plot_accretion_rates()
 	sfdb.plot_all(tag=tag, mlim=1e-5, label_='ll-5')
+	sfdb.plot_rplf(tag=tag, mlim=1e-5, label_='ll-5')
 
 	#Make the plots for the paper
 	sfdb.plot_discfrac(tag=tag, rmlim=[1e-5, 3e-5, 9e-5], label='_mlv')
