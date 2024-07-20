@@ -513,10 +513,10 @@ class sfr_database():
 
 			return None
 
-		def plot_all(self, tplot=[0.5, 1.0, 2., 3.0, 5.0], idt=0, mlim=mllim, nlevs=20, tag='', label=''):
+		def plot_all(self, tplot=[0.5, 1.0, 2., 3.0, 5.0], idt=0, mlim=mllim, nlevs=20, tag='', label_=''):
 			m_star = np.array(getattr(self, 'mstevol'+tag)) / Msol2g
 			time = np.array( getattr(self,'tdiscevol'+tag)) / Myr2s
-			print(label)
+			print(label_)
 			
 			mdisc = getattr(self, 'mdiscevol'+tag)[idt] / Msol2g
 			mdotst = getattr(self, 'mdotevol'+tag)[idt] * year2s / Msol2g
@@ -678,7 +678,7 @@ class sfr_database():
 			cbar_ax = fig.add_axes([0.95, 0.11, 0.02, 0.77])"""
 			plt.subplots_adjust(wspace=0, hspace=0)
 			#fig.colorbar(cf_rdisc, cax=cbar_ax, label='Model KDE')
-			plt.savefig('discprops'+tag+label+'.pdf', bbox_inches='tight', format='pdf')
+			plt.savefig('discprops'+tag+label_+'.pdf', bbox_inches='tight', format='pdf')
 			plt.show()
 
 			return None
