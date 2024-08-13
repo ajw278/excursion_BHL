@@ -32,10 +32,10 @@ def compute_Rcrit(Mstar, Lstar, flang=np.pi/2, mu=2.3):
 
 
 
-def compute_Rwind(Mstar, Lstar_UV, rho0, eps_geo=0.1, eps_wind=0.1):
+def compute_Rwind(Mstar, Lstar_UV, rho0, eps_wind=ref_eps_wind):
 	const1 = (G*Mstar*2.)**(1.5)
 	const2 = 2./np.pi
-	return ((const2/const1)*Lstar_UV*eps_geo*eps_wind/rho0)**2
+	return ((const2/const1)*Lstar_UV*eps_wind/rho0)**2
 	
 
 def compute_Rstrom(Phi_Ly, rho0, alphaB=2.6e-13):
