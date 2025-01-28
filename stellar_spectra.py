@@ -1,7 +1,7 @@
 import os
 
 
-os.environ["PYSYN_CDBS"] = "/home/awinter/Documents/pysyn_data/grp/redcat/trds/"
+os.environ["PYSYN_CDBS"] = "/Users/andrewwinter/Documents/pysyn_data/grp/redcat/trds/"
 
 import stellar_evolution as se
 import pysynphot as S
@@ -45,6 +45,7 @@ def get_spectra(mstar, age, metallicity=0.0, Mdot_acc=0.0):
 	Teff, log_g, log_L, R, star_mass = se.fetch_stellar_properties(mstar, age)
 	
 	# Compute the stellar spectrum using Castelli & Kurucz atmosphere models
+	sp = S.Icat('ck04models', Teff, metallicity, log_g)
 	try:
 		sp = S.Icat('ck04models', Teff, metallicity, log_g)
 	except:
@@ -239,7 +240,7 @@ def plot_fractional_uv_luminosity_evolution(stellar_masses, metallicity=0.0, Mdo
 	
 def plot_spectrum(mass, age, metallicity=0.0):
 	
-	wave, flux, R = get_spectra(target_mass, age, metallicity=metallicity)
+	wave, flux, R = get_spectra(mass, age, metallicity=metallicity)
 	# Plot the spectrum
 	plt.figure(figsize=(10, 6))
 	plt.plot(wave, flux)
