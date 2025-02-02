@@ -14,7 +14,7 @@ import matplotlib.animation as animation
 plt.rc('text', usetex=True)
 
 class MultiResolutionArray:
-	def __init__(self, grid, filename='spatial_evolve'):
+	def __init__(self, grid, snapshot_dir='snapshots'):
 		"""
 		Initialize the MultiResolutionArray. If a file with the given filename exists,
 		load the object from the file. Otherwise, initialize the object and save it.
@@ -26,21 +26,20 @@ class MultiResolutionArray:
 		Returns:
 			None
 		"""
-		self.filename = filename
+		self.grid = grid
+		self.resolutions = self.generate_resolutions()
+		self.snapshot_dir = snapshot_dir
 
-		# Check if the file exists
-		if os.path.exists(self.filename):
-			print(f"File {self.filename} exists. Loading MultiResolutionArray from file.")
-			loaded_obj = self.load(self.filename)
-			self.grid = loaded_obj.grid
-			self.resolutions = loaded_obj.resolutions
-			self.snapshots = loaded_obj.snapshots
+		# Create snapshot directory if it doesn't exist
+		os.makedirs(self.snapshot_dir, exist_ok=True)
+
+		# Try loading the latest snapshot
+		latest_snapshot = self.get_latest_snapshot_index()
+		if latest_snapshot is not None:
+			print(f"Loading latest snapshot: {latest_snapshot}")
+			self.load_snapshot(latest_snapshot)
 		else:
-			print(f"File {self.filename} does not exist. Initializing a new MultiResolutionArray.")
-			self.grid = grid
-			self.resolutions = self.generate_resolutions()
-			self.snapshots = []
-			self.save(self.filename)
+			print("No previous snapshots found. Starting fresh.")
 
 	def generate_resolutions(self):
 		"""
@@ -160,64 +159,64 @@ class MultiResolutionArray:
 		if dt > Tend_sec:
 			raise ValueError("Time-step size exceeds the total evolution time. Adjust fraction_of_tau or Tend.")
 
-		# Determine the restart point
-		if self.snapshots:
-			last_snapshot_time = len(self.snapshots) * dt_snap_sec
-			print(f"Restarting from snapshot at time {last_snapshot_time / year2s / 1e6:.2f} Myr.")
+		#  Start evolution from latest snapshot if available
+		latest_snapshot = self.get_latest_snapshot_index()
+		if latest_snapshot is not None:
+			t = latest_snapshot * dt_snap_sec
+			print(f"Resuming from snapshot {latest_snapshot} at {t / year2s / 1e6:.2f} Myr.")
 		else:
-			last_snapshot_time = 0.0
+			t = 0.0
+			latest_snapshot = -1
 			print("Starting evolution from the beginning.")
 
 		# Time evolution loop
-		t = last_snapshot_time  # Start time in seconds
-		next_snapshot_time = t + dt_snap_sec  # Time at which to store the next snapshot
+		snapshot_idx = latest_snapshot + 1
+		next_snapshot_time = t + dt_snap_sec
 		while t < Tend_sec:
 			self.update_resolutions(dt)
 			t += dt
 
-			# Check if it's time to store a snapshot
 			if t >= next_snapshot_time:
-				snapshot = [np.copy(res) for res in self.resolutions]
-				self.snapshots.append(snapshot)
-				self.save(self.filename)  # Save the class state to the file
-				print(f"Snapshot stored and saved at time {t / year2s / 1e6:.2f} Myr.")
+				self.save_snapshot(snapshot_idx)
+				snapshot_idx += 1
 				next_snapshot_time += dt_snap_sec
-
+		
 		print(f"Evolution completed: Total time = {Tend} Myr")
 
-	def save(self, filename):
+	def save_snapshot(self, snapshot_idx):
+		""" Save the current resolutions to disk as separate .npy files. """
+		for level, array in enumerate(self.resolutions):
+			filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_level_{level}.npy")
+			np.save(filename, array)
+		print(f"Snapshot {snapshot_idx} saved.")
+
+	def load_snapshot(self, snapshot_idx):
+		""" Load a snapshot from .npy files. """
+		self.resolutions = []
+		for level in range(len(self.grid.rlevels)):
+			filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_level_{level}.npy")
+			if os.path.exists(filename):
+				self.resolutions.append(np.load(filename))
+			else:
+				print(f"Warning: Missing file {filename}. Snapshot might be incomplete.")
+		print(f"Snapshot {snapshot_idx} loaded.")
+
+	def get_latest_snapshot_index(self):
+		""" Find the latest snapshot index from the saved files. """
+		snapshot_files = [f for f in os.listdir(self.snapshot_dir) if f.startswith("snapshot_")]
+		if not snapshot_files:
+			return None
+		snapshot_indices = sorted(set(int(f.split("_")[1]) for f in snapshot_files))
+		return snapshot_indices[-1] if snapshot_indices else None
+
+
+	def create_video(self, output_filename="simulation.mp4", fps=10):
 		"""
-		Save the MultiResolutionArray object to a file.
+		Create an MP4 video using precomputed volume densities.
 
-		Args:
-			filename (str): File path to save the object.
-
-		Returns:
-			None
-		"""
-		with open(filename, 'wb') as f:
-			pickle.dump(self, f)
-		print(f"MultiResolutionArray saved to {filename}.")
-
-	@staticmethod
-	def load(filename):
-		"""
-		Load a MultiResolutionArray object from a file.
-
-		Args:
-			filename (str): File path from which to load the object.
-
-		Returns:
-			MultiResolutionArray: The loaded object.
-		"""
-		with open(filename, 'rb') as f:
-			obj = pickle.load(f)
-		print(f"MultiResolutionArray loaded from {filename}.")
-		return obj
-
-	def create_video(self, output_filename="simulation.mp4", fps=10, downsample_factor=1):
-		"""
-		Create an MP4 video from the saved snapshots.
+		- If the volume densities are missing, they will be precomputed first.
+		- The function loads precomputed 3D volume density `.npy` files and 
+			computes surface densities on-the-fly.
 
 		Args:
 			output_filename (str): The name of the output MP4 file.
@@ -226,139 +225,154 @@ class MultiResolutionArray:
 		Returns:
 			None
 		"""
-		if not self.snapshots:
-			print("No snapshots available to create a video.")
+		# Check if precomputed volume densities exist
+		snapshot_indices = sorted(set(
+			int(f.split("_")[1]) for f in os.listdir(self.snapshot_dir) if f.endswith("_volume.npy")
+		))
+
+		if not snapshot_indices:
+			print("No precomputed volume densities found. Running precompute_volume_densities()...")
+			self.precompute_volume_densities()
+			snapshot_indices = sorted(set(
+				int(f.split("_")[1]) for f in os.listdir(self.snapshot_dir) if f.endswith("_volume.npy")
+			))
+
+		if not snapshot_indices:
+			print("No volume densities available. Exiting video creation.")
 			return
 
-		print(f"Creating video from {len(self.snapshots)} snapshots...")
+		print(f"Creating video from {len(snapshot_indices)} precomputed volume densities...")
 
-		# Set up the figure for plotting
+		# Load first snapshot to initialize the figure
+		first_snapshot_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_indices[0]:04d}_volume.npy")
+		first_volume_density = np.load(first_snapshot_filename)*self.grid.rho0
+		first_surface_density = self.compute_surface_density(first_volume_density)
+		first_surface_density= first_volume_density[:,:,0]
+
+		# Setup figure
 		fig, ax = plt.subplots(figsize=(8, 6))
-		im = None
+		extent = [0, self.grid.rmax / pc2cm, 0, self.grid.rmax / pc2cm]
+		im = ax.imshow(np.log10(first_surface_density.T), extent=extent, origin="lower", aspect="auto", cmap="hot", vmin=-24.0, vmax=-20.0)
+		ax.set_xlabel(r"$x \, [\mathrm{pc}]$")
+		ax.set_ylabel(r"$y \, [\mathrm{pc}]$")
+		cbar = plt.colorbar(im, ax=ax, label=r"log Density [$\mathrm{g \, cm^{-3}}$]")
 
-		# Function to initialize the plot
-		def init():
-			nonlocal im
-			surface_density = self.calculate_surface_density(self.snapshots[0])
-			# Downsample the surface density
-			surface_density = surface_density[::downsample_factor, ::downsample_factor]
-			im = ax.imshow(
-				surface_density.T,
-				extent=[0, self.grid.rmax / pc2cm, 0, self.grid.rmax / pc2cm],
-				origin="lower",
-				aspect="auto",
-				cmap="viridis",
-				vmin=np.min(surface_density),
-				vmax=np.percentile(surface_density, 90.0),
-			)
-			ax.set_title("Surface Density Evolution")
-			ax.set_xlabel(r"$x \, [\mathrm{pc}]$")
-			ax.set_ylabel(r"$y \, [\mathrm{pc}]$")
-			fig.colorbar(im, ax=ax, label=r"Surface Density [$\mathrm{g \, cm^{-2}}$]")
-			return [im]
-
-		# Function to update the plot for each frame
+		# Function to update the animation
 		def update(frame_idx):
-			print('Calculating SD...')
-			surface_density = self.calculate_surface_density(self.snapshots[frame_idx])
-			print('Downsampling...')
-			surface_density = surface_density[::downsample_factor, ::downsample_factor]
-			im.set_array(surface_density.T)
-			ax.set_title(f"Snapshot {frame_idx + 1}/{len(self.snapshots)}")
-			print(frame_idx)
+			snapshot_idx = snapshot_indices[frame_idx]
+			volume_density_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_volume.npy")
+			volume_density = np.load(volume_density_filename)
+			volume_density *= self.grid.rho0
+			surface_density = self.compute_surface_density(volume_density)
+			surface_density= volume_density[:,:,0]
+
+			im.set_array(np.log10(surface_density.T))
+			#ax.set_title(f"Time = {snapshot_idx} Myr")
 			return [im]
 
 		# Create the animation
-		ani = animation.FuncAnimation(
-			fig, update, frames=len(self.snapshots), init_func=init, blit=True
-		)
+		ani = animation.FuncAnimation(fig, update, frames=len(snapshot_indices), blit=False)
 
-		# Save the animation as an MP4 file
+		# Save the animation as MP4
 		ani.save(output_filename, writer="ffmpeg", fps=fps)
 		plt.close(fig)
 		print(f"Video saved as {output_filename}.")
-	
-	def calculate_surface_density(self, snapshot):
+
+	def compute_volume_density(self, snapshot):
 		"""
-		Calculate the surface density from a snapshot.
+		Compute the volume density from a snapshot efficiently at the highest resolution.
 
 		Args:
 			snapshot (list of np.ndarray): A list of resolution arrays for one snapshot.
 
 		Returns:
-			np.ndarray: The surface density array.
+			np.ndarray: The volume density array at the finest resolution.
 		"""
-		# Combine all levels into the finest resolution
-		total = np.zeros(snapshot[-1].shape, dtype=np.float64)
-		for ir, level_array in enumerate(snapshot):
-			factor = np.array(total.shape) / np.array(level_array.shape)
-			upsampled_array = zoom(level_array, factor, order=1)
-			total += upsampled_array
+		total_linear_density = None
 
-		# Convert log density to linear density
-		linear_density = np.exp(total)
+		for ir, level_array in enumerate(snapshot[::-1]):
+			if total_linear_density is None:
+				total_linear_density = level_array
+			else:
+				factor = np.array(total_linear_density.shape) / np.array(level_array.shape)
+				upsampled_array = zoom(level_array, factor, order=1)
+				total_linear_density += upsampled_array
 
-		# Integrate over the z-axis to compute surface density
-		dz = self.grid.rmax / total.shape[2]  # Assume uniform spacing in z
-		surface_density = np.sum(linear_density, axis=2) * dz
+		return np.exp(total_linear_density)
+	
 
-		return surface_density
-
-	def plot_surface_density(self):
+	def precompute_volume_densities(self):
 		"""
-		Compute and plot the surface density.
+		Precompute and save volume density maps for all existing snapshots at the finest resolution.
 
-		- Converts the 3D log density into linear density.
-		- Integrates the density along the z-axis to calculate surface density.
-		- Plots the surface density.
+		This function loads all available snapshot levels, sums the density contributions to 
+		the most refined grid, and saves the final 3D volume density as a `.npy` file.
+		"""
+		snapshot_indices = sorted(set(
+			int(f.split("_")[1]) for f in os.listdir(self.snapshot_dir) if f.startswith("snapshot_")
+		))
+
+		if not snapshot_indices:
+			print("No snapshot files found.")
+			return
+
+		print(f"Precomputing volume densities for {len(snapshot_indices)} snapshots...")
+
+		for snapshot_idx in snapshot_indices:
+			volume_density_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_volume.npy")
+
+			# Skip if already precomputed
+			if os.path.exists(volume_density_filename):
+				continue
+
+			# Load snapshot data
+			snapshot = []
+			for level in range(len(self.grid.rlevels)):
+				filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_level_{level}.npy")
+				if os.path.exists(filename):
+					snapshot.append(np.load(filename))
+
+			if not snapshot:
+				print(f"Warning: No data found for snapshot {snapshot_idx}, skipping.")
+				continue
+
+			# Compute volume density at the finest resolution
+			volume_density = self.compute_volume_density(snapshot)
+
+			# Save the precomputed volume density
+			np.save(volume_density_filename, volume_density)
+			print(f"Saved precomputed volume density: {volume_density_filename}")
+	
+	def compute_surface_density(self, volume_density):
+		"""
+		Compute the surface density from a precomputed volume density.
+
+		Args:
+			volume_density (np.ndarray): The 3D volume density array.
 
 		Returns:
-			None
+			np.ndarray: The 2D surface density array.
 		"""
-		# Evaluate the total perturbation at the finest resolution
-		total = self.evaluate_at_finest()
-
-		# Convert from log density to linear density
-		linear_density = np.exp(total)
-
-		# Compute the z-axis depth of each cell
-		dz = self.grid.rmax / total.shape[2]  # Assume uniform spacing in z
-
-		# Integrate over the z-axis to compute surface density
-		surface_density = np.sum(linear_density, axis=2) * dz
-
-		# Plot the surface density
-		plt.figure(figsize=(8, 6))
-		extent = [0, self.grid.rmax / pc2cm, 0, self.grid.rmax / pc2cm]  # Convert rmax to pc for axes
-		plt.imshow(surface_density.T, extent=extent, origin="lower", aspect="auto", cmap="viridis", vmin=0.0, vmax=np.percentile(surface_density, 80.0))
-		plt.colorbar(label=r"Surface Density [$\mathrm{g \, cm^{-2}}$]")
-		plt.xlabel(r"$x \, [\mathrm{pc}]$")
-		plt.ylabel(r"$y \, [\mathrm{pc}]$")
-		plt.title("Surface Density")
-		plt.show()
+		dz = self.grid.rmax / volume_density.shape[2]  # Cell depth
+		surface_density = np.sum(self.grid.rho0*volume_density, axis=2) * dz
+		return surface_density
 
 # Assuming trajectory_spatial_grid is properly defined
 pc2cm = 3.086e18  # Example constant
 year2s = 3.154e7  # Seconds in a year
-grid = exc.trajectory_grid(rmax=100.0 * pc2cm, rmin=0.5 * pc2cm, drfact=0.5)
+grid = exc.trajectory_grid(rmax=30.0 * pc2cm, rmin=0.2 * pc2cm, drfact=0.9)
 
-# Initialize the MultiResolutionArray
+
+# Initialize the MultiResolutionArray§
 mra = MultiResolutionArray(grid)
 
 # Create or load MultiResolutionArray
-filename = "multi_resolution_array.pkl"
-mra = MultiResolutionArray(grid, filename)
+mra = MultiResolutionArray(grid)
 
 # Evolve for 10 Myr, storing snapshots every 1 Myr
-mra.evolve(Tend=20.0, fraction_of_tau=0.1, dt_snap=0.2)
+mra.evolve(Tend=10.0, fraction_of_tau=0.1, dt_snap=0.2)
 
 # Create an MP4 video from the snapshots
 mra.create_video(output_filename="evolution.mp4", fps=10)
 
-# Evaluate the sum at the finest resolution
-#summed_array = mra.evaluate_at_finest()
-mra.plot_surface_density()
-
-# Check the result
-print("Summed array shape:", summed_array.shape)
 			
