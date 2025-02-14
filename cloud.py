@@ -33,6 +33,8 @@ class bound_clump():
 		self.R = 0.0
 		self.t = 0.0
 		self.v = np.array([0.0,0.0,0.0])
+		self.r = np.array([0.,0., 0.])
+
 		self.sv = 0.0
 		self.mst = 0.0
 		self.vr = 0.0
@@ -80,7 +82,7 @@ class bound_clump():
 		self.icols = np.append(self.icols, self.icol)
 
 	
-	def form(self, icol, traj):
+	def form(self, icol, traj, position=None, velocity=None):
 
 		median_density = traj.grid.rho0*np.exp(traj.grid.delta_c[icol] + traj.grid.mu_lnrho[icol])
 		sigmav = np.sqrt(np.sum(traj.grid.Delta_Sv[icol:]))
@@ -108,7 +110,39 @@ class bound_clump():
 		self.rho_med_crit = median_density
 		self.calc_Mgas()
 		self.vol = self.M/self.rho_med
-	
+
+	def form_nontraj(self, icol, grid, position, velocity, tform):
+
+		median_density = grid.rho0*np.exp(grid.delta_c[icol] + grid.mu_lnrho[icol])
+		sigmav = np.sqrt(np.sum(grid.Delta_Sv[icol:]))
+		radius = grid.rlevels[icol]
+		velocity = velocity
+		
+		self.icol = icol
+		self.tform = tform
+		self.rho_med = median_density
+		self.Mdot_BHL = 0.0
+		self.R = radius
+		self.R0 = radius
+		self.tau_ff0 = self.tau_ff()
+		self.v = velocity
+		self.r = position
+		self.r0 = position
+
+		self.sv = sigmav
+		self.t = tform
+		self.formed=True
+		self.dispersed=False
+		self.Espect = grid.Espect
+		self.cs = grid.cs
+		self.kappa = grid.kappa
+		self.lnrho_var0  =variance_k(1./self.R0,  cs=self.cs, kappa=self.kappa, Espect = self.Espect)
+		self.lnrho_med0  = np.log(median_density)
+
+		self.rho_med_crit = median_density
+		self.calc_Mgas()
+		self.vol = self.M/self.rho_med
+
 	def lognormal(self, x, mu, var):
 		return (1./x/np.sqrt(2.*np.pi*var))*np.exp(-(np.log(x)-mu)**2/2./var)
 		
@@ -259,8 +293,7 @@ class bound_clump():
 		return self.rho_med_crit
 	
 	
-	def collapse_step(self, dt,  traj):
-		tnew = traj.t
+	def collapse_step(self, tnew):
 		if tnew<self.tau_ff0:
 			self.R = self.R0*(1.-((tnew-self.tform)/self.tau_ff0)**2)**(self.a/3.)
 			self.calc_rhogasM()
@@ -269,11 +302,14 @@ class bound_clump():
 			self.M = 0.0
 		if self.R<self.Rmin:
 			self.R = self.Rmin
+
+		
+	
 	
 
-	def SF_step(self, dt, traj):
+	def SF_step(self, tnew):
 		
-		rhoacc =self.calc_rho_acc(traj.t)
+		rhoacc =self.calc_rho_acc(tnew)
 		cdf = self.CDFrho0_M(rhoacc)
 		sf_frac = cdf
 		self.mst = self.M*sf_frac
@@ -284,6 +320,7 @@ class bound_clump():
 		
 		self.calc_rhogasM()
 		return self.mst
+	
 		
 	def check_dispersal(self):
 
@@ -294,30 +331,37 @@ class bound_clump():
 			return True
 		
 		return False
+	
+	def move(self, tnew):
+		self.r = self.r0 + tnew * self.v
 		
 
 	def evolve(self, traj, rejuvinate=False):
-		dt = traj.t - self.t
+		if hasattr(traj, 't'):
+			tnew = traj.t
+		else:
+			tnew=traj 
+		dt = tnew-self.t
 		if (rejuvinate or not self.dispersed) and dt>0.0:
 			if self.formed and not self.dispersed:
 				
 				#self.accretion_step(dt, traj)
-				self.SF_step(dt, traj)
-				self.collapse_step(dt,  traj)
+				self.SF_step(tnew)
+				self.collapse_step(tnew)
 				if np.isnan(self.M):
 					print(self.M, self.R, self.rho_med)
 					raise Warning('Cloud mass is NaN in evolve timestep')
 				self.check_dispersal()
+				self.move(tnew)
+
 		
 		if (not self.formed) or rejuvinate:
 			self.find_collapse(traj)
 		
-
-		self.t = self.t+dt
-
+		self.t = tnew
 		self.update_arrays()
-
 		return self.icol
+	
 
 
 class fake_cloud():
