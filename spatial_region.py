@@ -30,6 +30,9 @@ class MultiResolutionArray:
 		self.resolutions = self.generate_resolutions()
 		self.snapshot_dir = snapshot_dir
 
+		self.clouds =  []
+		self.icollapsed = [np.zeors
+
 		# Create snapshot directory if it doesn't exist
 		os.makedirs(self.snapshot_dir, exist_ok=True)
 
@@ -299,6 +302,25 @@ class MultiResolutionArray:
 				total_linear_density += upsampled_array
 
 		return np.exp(total_linear_density)
+	
+	def find_collapse(self):
+		"""
+		"""
+		delta_sum = None
+
+		if delta_sum is None:
+			delta_sum = np.zeros(self.resolutions[-1].shape)
+
+		for ir, level_array in enumerate(self.resolutions):
+			delta_c = self.grid.delta_c[ir]
+			factor = np.array(delta_sum.shape) / np.array(level_array.shape)
+			upsampled_array = zoom(level_array, factor, order=1)
+			delta_sum += upsampled_array
+			icollapse = (delta_sum>delta_c)&(~self.icollapsed[ir])
+
+
+			
+			
 	
 
 	def precompute_volume_densities(self):
