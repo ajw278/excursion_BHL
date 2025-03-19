@@ -195,7 +195,6 @@ class trajectory():
 				self.Ddelta = np.diff(delta, prepend=delta[0])
 				if not iresample is None:
 					self.resample_d_trajectory(iresample)
-		
 
 		self.vs =[]
 		self.deltas = []

@@ -1,7 +1,9 @@
 import os
 
 
+
 os.environ["PYSYN_CDBS"] = "/Users/andrewwinter/Documents/pysyn_data/grp/redcat/trds/"
+#os.environ["PYSYN_CDBS"] = "/home/awinter/Documents/pysyn_data/grp/redcat/trds/"
 
 import stellar_evolution as se
 import pysynphot as S
