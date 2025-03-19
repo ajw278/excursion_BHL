@@ -39,6 +39,75 @@ def blackbody_spectrum(wavelength, temperature):
     # To prevent overflow, we limit the exponent value
     exponent = np.clip(exponent, 1e-3, 30)
     return (2 * h * c**2 / wavelength**5) / (np.exp(exponent) - 1)
+
+
+# Free-fall velocity
+def free_fall_velocity(M_star, R_star, r_M):
+	return np.sqrt(2 * G * M_star * (1/R_star - 1/r_M))
+
+# Shock temperature
+def shock_temperature(v_ff):
+	return (3./16.0) * (mu * mH * v_ff**2) / k_B
+
+
+def column_energy_flux(f, R_star, M_star, Mdot_acc, r_M):
+	vff = free_fall_velocity(M_star, R_star, r_M)
+	F = 0.5*Mdot_acc*vff**2
+	F /= f*4.*np.pi*R_star*R_star
+	return F
+
+def coll_temp_approx(Tstar, F):
+	Tcol = ((sig_SB*Tstar**4 + F)/sig_SB)**(1./4.)
+	return Tcol
+
+# Accretion shock luminosity
+def accretion_luminosity(M_star, R_star, M_dot, r_M):
+	return (G * M_star * M_dot) / R_star * (1 - R_star / r_M)
+
+# Blackbody emission from the shock region
+def shock_flux(wavelength_angstrom, T, area):
+	B_lambda = planck_wavelength(wavelength_angstrom, T)
+	return B_lambda * area
+
+def magnetospheric_radius(M_star, M_dot, R_star, B=1000.0, xi=0.7):
+	mdm = B*R_star**3
+	return xi*((mdm**4.)/(4.*G*M_star*M_dot**2))**(1./7.)
+
+# Total accretion shock spectrum approximated as by Mendigutia et al. 2011 (actually reference within MDCH04..)
+def accretion_shock_spectrum_approx(M_star_sol, R_star_sol, M_dot_Msolyr, Tstar, wavelength_A, f=0.01):
+
+	M_star = M_star_sol*Msol
+	R_star = R_star_sol*Rsol
+	M_dot = M_dot_Msolyr*Msol/year
+
+	r_M = magnetospheric_radius(M_star, M_dot, R_star, B=1000.0, xi=0.7)
+
+	print('r_m/r_star', r_M/R_star)
+
+	# Free-fall velocity
+	v_ff = free_fall_velocity(M_star, R_star, r_M)
+
+	print('v_ff (km/s)', v_ff/1e5)
+
+	# Shock temperature
+	#T_shock = shock_temperature(v_ff)
+	F = column_energy_flux(f, R_star,  M_star, M_dot, r_M)
+
+	T_coll = coll_temp_approx(Tstar, F)
+
+	# Luminosity from the shock
+	L_acc = accretion_luminosity(M_star, R_star, M_dot, r_M)
+
+	# Filling factor (fraction of the surface covered by accretion)
+	A_coll = f * 4 * np.pi * R_star**2
+
+	# Spectrum from the shock as a function of wavelength
+	spectrum = shock_flux(wavelength_A, T_coll, A_coll)
+
+	print('Normalisation:', L_acc / np.trapz(spectrum, wavelength_A))
+	spectrum *= L_acc / np.trapz(spectrum, wavelength_A)
+
+	return spectrum
     
     
 def get_spectra(mstar, age, metallicity=0.0, Mdot_acc=0.0):
@@ -79,16 +148,17 @@ def get_spectra(mstar, age, metallicity=0.0, Mdot_acc=0.0):
 	#	raise warnings.warn('Luminosity of the spectra very different to the evoluton model')
 	acc_cont=0.
 	if Mdot_acc>0.0:
+
+		flux_acc = accretion_shock_spectrum_approx(star_mass, R, Mdot_acc, Teff, sp.wave, f=0.01)/(4.*np.pi*R*R*Rsol*Rsol)
 		Lacc = G*star_mass*Mdot_acc*Msol*Msol/year / (R*Rsol)
-		Teff_acc = (Lacc/4/np.pi/(R*R*Rsol*Rsol)/sig_SB)**(0.25)
-		Teff_acc_th = G*star_mass*mp*Msol/(3.*k_B*R*Rsol)
+		#Teff_acc = (Lacc/4/np.pi/(R*R*Rsol*Rsol)/sig_SB)**(0.25)
+		#Teff_acc_th = G*star_mass*mp*Msol/(3.*k_B*R*Rsol)
 		
 		#sp_acc = S.BlackBody(Teff_acc)
 		#flux_acc = Lacc*sp_acc.flux/Ltot_acc
 		#wave_acc = sp_acc.wave
 		
 		wave_acc = sp.wave
-		flux_acc = planck.bbfunc(wave_acc, Teff_acc) #  blackbody_spectrum(wave_acc*1e-8, Teff_acc)
 		
 		Ltot_acc = np.trapz(flux_acc*np.pi*4.0*R*R*Rsol*Rsol, wave_acc)
 		
