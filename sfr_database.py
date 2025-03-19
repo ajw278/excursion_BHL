@@ -49,6 +49,8 @@ class sfr_database():
 					self.__dict__.update(data)
 				return True
 			except FileNotFoundError:
+				print('Load failed.')
+				exit()
 				return False
 
 		def save(self):
