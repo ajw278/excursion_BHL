@@ -11,6 +11,8 @@ km2pc = 3.241e-14
 pc2cm = km2cm/km2pc
 au2cm = 1.496e13
 Mearth2Msol = 3.0027e-6
+mH = 1.673e-24
+mu_mass = 2.3
 
 Lsolergs = 3.82e33
 
