@@ -68,7 +68,7 @@ def sample_z(M, a, b, k, Nz=1000, zres=1000, zmaxfact=100.0, zminfact=1e-8, rmax
     rmax = rmaxfact*L
     zsp = np.logspace(np.log10(zminfact*L), np.log10(zmaxfact*L), zres)
     cmz = cummassdz_fixz(rmax, zsp, M, a, b)
-    cmz_int = integrate.cumtrapz(cmz, zsp, initial=0.0)
+    cmz_int = integrate.cumulative_trapezoid(cmz, x=zsp, initial=0.0)
     cmzn_inv = interpolate.interp1d(cmz_int/cmz_int[-1], zsp)
     xrand = np.random.uniform(size=Nz)
     sign_rand  = np.random.uniform(size=Nz)
@@ -80,7 +80,7 @@ def sample_r(zfix, M, a, b, k, rres=100, rmaxfact=100.0, rminfact=1e-8):
     L = a+b
     rsp = np.logspace(np.log10(rminfact*L), np.log10(rmaxfact*L), rres)
     cmr = density(rsp, zfix, M, a, b)*2*np.pi*rsp
-    cmr_int = integrate.cumtrapz(cmr, rsp, initial=0.0)
+    cmr_int = integrate.cumulative_trapezoid(cmr, x=rsp, initial=0.0)
     cmrn_inv = interpolate.interp1d(cmr_int/cmr_int[-1], rsp)
     xrand  = np.random.uniform()
     return cmrn_inv(xrand)

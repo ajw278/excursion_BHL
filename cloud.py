@@ -95,6 +95,7 @@ class bound_clump():
 		self.Mdot_BHL = 0.0
 		self.R = radius
 		self.R0 = radius
+		self.r0 = np.zeros(3)
 		self.tau_ff0 = self.tau_ff()
 		self.v = velocity
 		self.sv = sigmav
