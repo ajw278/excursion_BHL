@@ -158,11 +158,11 @@ def create_video(self, output_filename="simulation.mp4", fps=10):
 			#ax.set_title(f"Time = {snapshot_idx} Myr")
 			return [im]
 
-		# Create the animation
-		ani = animation.FuncAnimation(fig, update, frames=len(snapshot_indices), blit=False)
+			# Create the animation
+			ani = animation.FuncAnimation(fig, update, frames=len(snapshot_indices), blit=False)
 
-		# Save the animation as MP4
-		ani.save(output_filename, writer="ffmpeg", fps=fps)
-		plt.close(fig)
-		print(f"Video saved as {output_filename}.")
+			# Save the animation as MP4
+			ani.save(output_filename, writer="ffmpeg", fps=fps)
+			plt.close(fig)
+			print(f"Video saved as {output_filename}.")
 

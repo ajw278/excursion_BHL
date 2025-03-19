@@ -8,13 +8,12 @@ from scipy.ndimage import zoom
 from scipy.special import erfinv
 import pickle
 import os
-
 import matplotlib.animation as animation
 
 plt.rc('text', usetex=True)
 
 class MultiResolutionArray:
-	def __init__(self, grid, snapshot_dir='snapshots', imaxcoll=None):
+	def __init__(self, snapshot_dir='snapshots', imaxcoll=None, rmax=200., rspatial=30.0, rmin=0.3, dr=0.8, n0=1):
 		"""
 		Initialize the MultiResolutionArray. If a file with the given filename exists,
 		load the object from the file. Otherwise, initialize the object and save it.
@@ -26,12 +25,16 @@ class MultiResolutionArray:
 		Returns:
 			None
 		"""
-		self.grid = grid
-		self.resolutions = self.generate_resolutions()
+
+		pc2cm = 3.086e18  # Example constant
+		self.define_spatial_scales(rmax*pc2cm, rspatial*pc2cm, rmin*pc2cm, dr, n0)
+		self.grid = exc.trajectory_grid(self.scales)
+		self.generate_resolutions()
+
 		self.snapshot_dir = snapshot_dir
 		if imaxcoll is None:
 			iall= np.arange(len(self.resolutions))
-			imaxcoll = int(np.percentile(iall, 85.0))
+			imaxcoll = int(np.percentile(iall, 90.0))
 		
 		self.imaxcoll = imaxcoll
 		self.t = 0.0
@@ -42,6 +45,42 @@ class MultiResolutionArray:
 		# Create snapshot directory if it doesn't exist
 		os.makedirs(self.snapshot_dir, exist_ok=True)
 
+	
+	def define_spatial_scales(self, rmax, rspatial, rmin, dr, n0):
+		# Define scales from rmax to rspatial reducing by dr
+		scales = [rmax]
+		super_scales = [rmax]
+		ir =0
+		while scales[-1] * dr > rspatial:
+			scales.append(scales[-1] * dr)
+			super_scales.append(scales[-1])
+			ir+=1 
+		scales.append(rspatial)  # Ensure rspatial is included
+		self.super_scales = super_scales
+
+		# Define n_res at rspatial
+		n_res = [n0]
+
+		# Generate spatial scales based on n_res
+		rscale = rspatial
+		self.spatial_scales = [rspatial/float(n0)]
+		self.spatial_level = [ir]
+		while rscale > rmin:
+			next_n_res = max(int(n_res[-1] / dr), n_res[-1] + 1)  # Enforce rule
+			n_res.append(next_n_res)
+			rscale = rspatial *float(n0) / float(next_n_res)  # Compute next spatial scale
+			scales.append(rscale)
+			self.spatial_scales.append(rscale)
+			ir+=1
+			self.spatial_level.append(ir)
+
+		self.scales = np.array(scales)
+		self.spatial_scales = np.array(self.spatial_scales)
+		self.n_res = n_res
+
+		return self.scales
+
+
 
 	def generate_resolutions(self):
 		"""
@@ -50,20 +89,29 @@ class MultiResolutionArray:
 		Returns:
 			list of np.ndarray: Arrays for each level, covering the same spatial area at appropriate resolutions.
 		"""
+		super_resolutions = []
+		for ir, r in enumerate(self.super_scales):
+			# Create and initialize the grid for this resolution level
+			level_grid = self.initialize_resolution(ir, 1)
+			super_resolutions.append(level_grid)
+
+
 		resolutions = []
 		# Get the finest resolution (spanning the domain with rmax as the length scale)
 		#finest_resolution_size = int(self.grid.rmax / self.grid.dr[-1])
 
-		for ir, r in enumerate(self.grid.rlevels):
+		for ir, r in enumerate(self.spatial_scales):
 			# Define the resolution for the current level based on the length scale
-			resolution_size = int(self.grid.rmax / self.grid.rlevels[ir])
+			resolution_size = self.n_res[ir]
 			
 			# Create and initialize the grid for this resolution level
-			level_grid = self.initialize_resolution(ir, resolution_size)
-	
+			level_grid = self.initialize_resolution(self.spatial_level[ir], resolution_size)
 			resolutions.append(level_grid)
 
-		return resolutions
+		self.super_resolutions = super_resolutions
+		self.resolutions = resolutions
+
+		return None
 	
 	def initialize_resolution(self, ilevel, resolution_size):
 		"""
@@ -96,6 +144,7 @@ class MultiResolutionArray:
 		"""
 		# Initialize the result array at the finest resolution
 		total = np.zeros(self.resolutions[-1].shape, dtype=np.float64)
+		total += np.sum(self.super_resolutions)
 
 		for ir, level_array in enumerate(self.resolutions):
 			# Compute the scaling factor for this level relative to the finest level
@@ -119,9 +168,34 @@ class MultiResolutionArray:
 		Returns:
 			None: Updates self.resolutions in place.
 		"""
-		for ilevel in range(len(self.resolutions)):
+
+		#Go over the super resolution scales first (larger than grid)
+
+		for ilevel in range(len(self.super_resolutions)):
 			# Compute exponential decay term
 			exp_decay = np.exp(-dt / self.grid.tau_R[ilevel])
+
+
+			# Update the current resolution level
+			Ddelta_new = self.super_resolutions[ilevel] * exp_decay
+			random_term = np.random.normal(
+				loc=0.0,
+				scale=1.0,
+				size=self.super_resolutions[ilevel].shape
+			)
+			Ddelta_new += random_term * np.sqrt(
+				self.grid.Delta_S[ilevel] * (1.0 - np.exp(-2.0 * dt / self.grid.tau_R[ilevel]))
+			)
+
+			# Update the resolution level in place
+			self.super_resolutions[ilevel] = Ddelta_new
+
+
+		#Now update over the grid-level spatial scales
+		for ilevel in range(len(self.resolutions)):
+			# Compute exponential decay term
+			ilevel_spatial = self.spatial_level[ilevel]
+			exp_decay = np.exp(-dt / self.grid.tau_R[ilevel_spatial])
 
 			# Update the current resolution level
 			Ddelta_new = self.resolutions[ilevel] * exp_decay
@@ -131,7 +205,7 @@ class MultiResolutionArray:
 				size=self.resolutions[ilevel].shape
 			)
 			Ddelta_new += random_term * np.sqrt(
-				self.grid.Delta_S[ilevel] * (1.0 - np.exp(-2.0 * dt / self.grid.tau_R[ilevel]))
+				self.grid.Delta_S[ilevel_spatial] * (1.0 - np.exp(-2.0 * dt / self.grid.tau_R[ilevel_spatial]))
 			)
 
 			# Update the resolution level in place
@@ -164,14 +238,10 @@ class MultiResolutionArray:
 				print(f"Snapshots already exist up to {Tend} Myr. Skipping evolution.")
 				return
 			
-			last_snapshot_idx = len(snapshot_times) - 1
-			t = snapshot_times[-1]  # Resume from last snapshot
-			print(f"Resuming from {t / year2s / 1e6:.2f} Myr.")
-		else:
-			snapshot_times = []
-			t = 0.0
-			last_snapshot_idx = -1
-			print("Starting evolution from the beginning.")
+		snapshot_times = []
+		t = 0.0
+		last_snapshot_idx = -1
+		print("Starting evolution from the beginning.")
 
 		snapshot_idx = last_snapshot_idx + 1
 		next_snapshot_time = t + dt_snap_sec
@@ -189,6 +259,7 @@ class MultiResolutionArray:
 			self.find_collapse()
 
 			if t >= next_snapshot_time:
+				print('Saving...')
 				self.save_snapshot(snapshot_idx, t)
 				snapshot_times.append(t)
 				np.save(snapshot_times_file, np.array(snapshot_times))  # Update time tracking
@@ -197,7 +268,7 @@ class MultiResolutionArray:
 
 		print(f"Evolution completed: Total time = {Tend} Myr")
 
-	def save_snapshot(self, snapshot_idx, time):
+	def save_snapshot_old(self, snapshot_idx, time):
 		"""
 		Save the finest resolution density and cloud properties.
 
@@ -219,8 +290,13 @@ class MultiResolutionArray:
 
 		# Save cloud properties
 		if self.clouds:
-			cloud_data = np.zeros((8, len(self.clouds)))  # 4 properties: (pos, size, vel, density)
+			survclouds= [] 
 			for i, cloud in enumerate(self.clouds):
+				if not cloud.dispersed:
+					survclouds.append(cloud)
+
+			cloud_data = np.zeros((8, len(survclouds)))  # 4 properties: (pos, size, vel, density)
+			for i, cloud in enumerate(survclouds):
 				cloud_data[:3, i] = cloud.r  # Position
 				cloud_data[3, i] = cloud.R    # Size
 				cloud_data[4:7, i] = cloud.v
@@ -229,6 +305,68 @@ class MultiResolutionArray:
 			np.save(clouds_filename, cloud_data)
 
 		print(f"Snapshot {snapshot_idx} saved at time {time / year2s / 1e6:.2f} Myr")
+
+	
+	def save_snapshot(self, snapshot_idx, time):
+		"""
+		Save the finest resolution density and cloud properties.
+
+		Args:
+			snapshot_idx (int): Index of the snapshot.
+			time (float): Time of the snapshot (seconds).
+
+		Returns:
+			None
+		"""
+		density_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_density.npy")
+		clouds_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_clouds.npy")
+
+		# Compute finest density
+		volume_density = self.grid.rho0*np.exp(self.evaluate_at_finest())
+
+		# Save cloud properties
+		if self.clouds:
+			survclouds= [] 
+			for i, cloud in enumerate(self.clouds):
+				if not cloud.dispersed:
+					survclouds.append(cloud)
+
+			cloud_data = np.zeros((8, len(survclouds)))  # 4 properties: (pos, size, vel, density)
+			for i, cloud in enumerate(survclouds):
+				cloud_data[:3, i] = cloud.r  # Position
+				cloud_data[3, i] = cloud.R    # Size
+				cloud_data[4:7, i] = cloud.v
+				cloud_data[7, i] = cloud.rho_med
+
+			np.save(clouds_filename, cloud_data)
+
+		# Load clouds
+		if os.path.exists(clouds_filename):
+			cloud_data = np.load(clouds_filename)
+			positions = cloud_data[:3, :].T
+			radii = cloud_data[3, :]
+			#velocities = cloud_data[4:7, :].T
+			densities = cloud_data[7, :]
+
+			# Create grid arrays
+			grid_shape = volume_density.shape
+			rmax = self.spatial_scales[0]
+			dx_finest = 2 * rmax / grid_shape[0]
+			x_vals = np.linspace(-rmax + dx_finest / 2, rmax - dx_finest / 2, grid_shape[0])
+			y_vals = np.linspace(-rmax + dx_finest / 2, rmax - dx_finest / 2, grid_shape[1])
+			z_vals = np.linspace(-rmax + dx_finest / 2, rmax - dx_finest / 2, grid_shape[2])
+			X, Y, Z = np.meshgrid(x_vals, y_vals, z_vals, indexing='ij')
+
+			# Override density where clouds exist
+			for pos, R, rho in zip(positions, radii, densities):
+				dist_squared = (X - pos[0])**2 + (Y - pos[1])**2 + (Z - pos[2])**2
+				volume_density[dist_squared <= R**2] = rho
+
+		# Save updated density
+		np.save(density_filename, volume_density)
+
+		print(f"Snapshot {snapshot_idx} saved at time {time / year2s / 1e6:.2f} Myr")
+
 
 
 	def create_video(self, output_filename="simulation.mp4", fps=10):
@@ -266,29 +404,29 @@ class MultiResolutionArray:
 
 		# Load first snapshot to initialize figure
 		first_density_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_indices[0]:04d}_density.npy")
-		delta = np.load(first_density_filename)
-		first_density= np.exp(delta)
-		print(delta, self.grid.rho0, self.grid.rmax)
+		first_density = np.load(first_density_filename)
 
 		# Select slice for visualization (midplane cut in z)
-		first_surface_density =  self.compute_surface_density(first_density)
+		first_surface_density =  self.compute_surface_density(first_density)/(mu_mass*mH)
 
 		# Compute 10th-90th percentile for color normalization
 		vmin, vmax = np.percentile(first_surface_density, [10, 90])
+		vmin = 20.0
+		vmax = 22.5
 
 		# Setup figure
 		fig, ax = plt.subplots(figsize=(8, 6))
-		extent = [0, self.grid.rmax / pc2cm, 0, self.grid.rmax / pc2cm]
-		im = ax.imshow(np.log10(first_surface_density.T), extent=extent, origin="lower", aspect="auto", cmap="hot", vmin=np.log10(vmin), vmax=np.log10(vmax))
+		rmax  = self.spatial_scales[0]
+		extent = [-rmax / pc2cm /2., rmax / pc2cm/2.,-rmax / pc2cm /2., rmax / pc2cm/2.]
+		im = ax.imshow(np.log10(first_surface_density.T), extent=extent, origin="lower", aspect="auto", cmap="hot", vmin=vmin, vmax=vmax)
 
 		# Add colorbar
-		cbar = plt.colorbar(im, ax=ax, label=r"log Density [$\mathrm{g \, cm^{-3}}$]")
+		cbar = plt.colorbar(im, ax=ax, label=r"log $N_{\mathrm{H}}$ [$\mathrm{cm^{-2}}$]")
 
 		# Set labels
 		ax.set_xlabel(r"$x \, [\mathrm{pc}]$")
 		ax.set_ylabel(r"$y \, [\mathrm{pc}]$")
 		time_text = ax.text(0.05, 0.9, "", transform=ax.transAxes, color="white", fontsize=12)
-		plt.show()
 
 		# Function to update the animation
 		def update(frame_idx):
@@ -297,8 +435,8 @@ class MultiResolutionArray:
 			cloud_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_clouds.npy")
 
 			# Load density
-			density =  np.exp(np.load(density_filename))
-			surface_density = self.compute_surface_density(density)  # Midplane slice
+			density = np.load(density_filename)
+			surface_density = self.compute_surface_density(density)/(mu_mass*mH)  # Midplane slice
 
 
 			im.set_array(np.log10(surface_density.T))
@@ -316,8 +454,7 @@ class MultiResolutionArray:
 
 				# Convert to PC units
 				pos_pc = positions / pc2cm
-				sizes_pc = sizes / pc2cm
-
+				sizes_pc = sizes / pc2cm 
 
 				# Overlay clouds
 				for pos, size in zip(pos_pc, sizes_pc):
@@ -337,28 +474,6 @@ class MultiResolutionArray:
 		plt.close(fig)
 		print(f"Video saved as {output_filename}.")
 
-	def compute_volume_density(self, snapshot):
-		"""
-		Compute the volume density from a snapshot efficiently at the highest resolution.
-
-		Args:
-			snapshot (list of np.ndarray): A list of resolution arrays for one snapshot.
-
-		Returns:
-			np.ndarray: The volume density array at the finest resolution.
-		"""
-		total_linear_density = None
-
-		for ir, level_array in enumerate(snapshot[::-1]):
-			if total_linear_density is None:
-				total_linear_density = level_array
-			else:
-				factor = np.array(total_linear_density.shape) / np.array(level_array.shape)
-				upsampled_array = zoom(level_array, factor, order=0)
-				total_linear_density += upsampled_array
-
-		return np.exp(total_linear_density)
-
 	
 	def get_spatial_coordinates(self, ilevel, index):
 		"""
@@ -372,57 +487,142 @@ class MultiResolutionArray:
 			np.ndarray: A tuple (x, y, z) for a single index or an array of shape (N, 3) for multiple indices.
 		"""
 		# Compute grid spacing at this level
-		N = int(self.grid.rmax / self.grid.rlevels[ilevel])  # Number of cells along each dimension
-		dx = 2 * self.grid.rmax / N  # Grid spacing at this level
+		rmax  = self.spatial_scales[0]*self.n_res[0]
+		N = self.n_res[ilevel]  # Number of cells along each dimension
+		dx = rmax / N  # Grid spacing at this level
 
 		# Convert to NumPy array if needed
 		index = np.asarray(index)
 
 		# Compute spatial coordinates using vectorized operations
-		coords = (index + 0.5) * dx - grid.rmax
+		coords = (index + 0.5) * dx -  rmax/2.
 
 		return coords
+
+	def cloud_check(self, position, radius):
+		"""
+		Check if the given position and radius overlap with any existing clouds.
+		
+		Args:
+			position (np.ndarray): The (x, y, z) position of the new potential cloud.
+			radius (float): The radius of the new potential cloud.
+		
+		Returns:
+			int: -1 if the position is within an existing cloud,
+					index i if the new cloud overlaps with an existing cloud,
+					-2 if no nearby clouds exist.
+		"""
+		for i, cloud in enumerate(self.clouds):
+			if cloud.dispersed:
+				continue
+			
+			position_i = cloud.r
+			radius_i = cloud.R
+			
+			# Compute distance between cloud centers
+			distance = np.linalg.norm(position - position_i)
+			
+			if distance <= radius_i:
+				return -1  # Position is within an existing cloud
+			elif distance <= radius_i + radius:
+				return i  # Overlaps with an existing cloud
+			
+		return -2  # No nearby cloud detected
+
 
 	def find_collapse(self, **kwargs):
 		"""
 		"""
-		delta_sum = None
 
-		if delta_sum is None:
-			delta_sum = np.zeros(self.resolutions[0].shape)
+		if not hasattr(self, 'last_formation_time'):
+			# Initialize formation tracking array (set to -inf so all regions are initially "unlocked")
+			self.next_formation_time = [np.full(res.shape, -np.inf) for res in self.resolutions[:self.imaxcoll]]
 
-		for ir, level_array in enumerate(self.resolutions[:self.imaxcoll]):
-			if ir>0:
+		delta_sum_ = None
+
+		if delta_sum_ is None:
+			delta_sum_ = np.zeros(self.resolutions[0].shape)
+
+		delta_sum_ += np.sum(self.super_resolutions)
+		print('Super resolution:', np.sum(self.super_resolutions))
+
+		inew=0
+		for ir_, level_array in enumerate(self.resolutions[:self.imaxcoll]):
+			ir = self.spatial_level[ir_]
+			#print(self.grid.rlevels[ir]/pc2cm)
+			if ir_>1:
 				delta_c = self.grid.delta_c[ir]
-				factor =  np.array(level_array.shape)/np.array(delta_sum.shape)
-				upsampled_array = zoom(delta_sum, factor, order=0, grid_mode=False)
+				factor =  np.array(level_array.shape)/np.array(delta_sum_.shape)
+				upsampled_array = zoom(delta_sum_, factor, order=0, grid_mode=False)
 				delta_sum = upsampled_array+level_array
 
 				#Check for any collapse on larger scales
-				self.icollapsed[ir][delta_sum>1e5] = 1
+				#self.icollapsed[ir_][delta_sum>1e5] = 1
 
 				#Identify new collapses
-				icollapse = (delta_sum>delta_c)&(self.icollapsed[ir]==0)
+				icollapse = (delta_sum>delta_c) #&(self.icollapsed[ir_]==0)
 
-				for coll_ind in np.swapaxes(np.where(icollapse),0,1):
-					print('New collapse:', coll_ind, ir, self.grid.rlevels[ir]/pc2cm)
+				for coll_ind in np.swapaxes(np.where(icollapse), 0, 1):
+					position = self.get_spatial_coordinates(ir_, coll_ind)
+					t_current = self.t  # Current simulation time
 
-					position  = self.get_spatial_coordinates(ir, coll_ind)
+					if t_current<self.next_formation_time[ir_][tuple(coll_ind)]:
+						print('Turbulent scale cannot produce more SFRs')
+						continue
 
+					"""locked=False
+					# Check if this cell (or finer cells) are locked
+					for coarse_ir_ in range(2, ir_)[::-1]:  # Only check coarser scales
+						coarse_ir = self.spatial_level[coarse_ir_]
+						coarse_factor = np.array(self.resolutions[coarse_ir_].shape) / np.array(self.resolutions[ir_].shape)
+						coarse_idx = (np.array(coll_ind) * coarse_factor).astype(int)
+						print(coll_ind, coarse_idx, coarse_factor)
+						#coarse_idx = np.clip((np.array(coll_ind) / coarse_factor).astype(int), 0, np.array(self.resolutions[coarse_ir].shape) - 1)
+
+						# If a collapse happened recently at a coarser scale, block it
+						if t_current - self.last_formation_time[coarse_ir_][tuple(coarse_idx)] < self.grid.tau_R[coarse_ir]:
+							locked=True
+							break  # Skip this cell, it's still in "lock" phase
+
+					if locked:
+						continue"""
+					
+
+					check = self.cloud_check(position, self.grid.rlevels[ir]/2.)
+					if check!=-2:
+						continue 
+					
+					# If allowed, form new cloud
 					self.clouds.append(cl.bound_clump(**kwargs))
+					inew +=1
 
-					#Placeholder velocity vector 
-					velocity = np.random.normal(size=3)*km2cm
+					# Assign cloud properties
+					velocity = 2.*np.random.normal(size=3) * km2cm
+					self.clouds[-1].form_nontraj(ir, self.grid, position, velocity, t_current)
+					print('New cloud:', self.grid.rlevels[ir]/pc2cm)
 
-					tform = self.t
+					# Record formation time at this level
+					self.next_formation_time[ir_][tuple(coll_ind)] = t_current + self.grid.tau_R[ir]
 
-					self.clouds[-1].form_nontraj(ir, self.grid, position, velocity, tform)
+					# **Propagate Lock to Finer Levels**
+					for finer_ir_ in range(ir_ + 1, len(self.resolutions[:self.imaxcoll])):
+						finer_grid_shape = self.resolutions[finer_ir_].shape
+						finer_factor = np.array(finer_grid_shape) / np.array(self.resolutions[ir_].shape)
 
-				self.icollapsed[ir][icollapse] = 1
+						# Compute corresponding finer grid indices
+						finer_indices = (np.array(coll_ind) * finer_factor).astype(int)
+
+						# Apply lock to finer grid cells using `tau_R[ir]`
+						slices = tuple(slice(fi, fi + 1) for fi in finer_indices)  # Select the finer region
+						self.next_formation_time[finer_ir_][slices] = t_current + self.grid.tau_R[ir]
+
+				#self.icollapsed[ir_][icollapse] = 1
 
 				#Add large number to collapsed delta in order to flag that smaller scale cells 
 				#have already collapsed
-				delta_sum[icollapse] = 1e9
+				#delta_sum[icollapse] = 1e9
+		print('Collapse check complete. %d new collapses.'%inew)
+
 
 	def precompute_volume_densities(self):
 		"""
@@ -455,10 +655,11 @@ class MultiResolutionArray:
 
 				# Create grid arrays
 				grid_shape = volume_density.shape
-				dx_finest = 2 * self.grid.rmax / grid_shape[0]
-				x_vals = np.linspace(-self.grid.rmax + dx_finest / 2, self.grid.rmax - dx_finest / 2, grid_shape[0])
-				y_vals = np.linspace(-self.grid.rmax + dx_finest / 2, self.grid.rmax - dx_finest / 2, grid_shape[1])
-				z_vals = np.linspace(-self.grid.rmax + dx_finest / 2, self.grid.rmax - dx_finest / 2, grid_shape[2])
+				rmax = self.spatial_scales[0]
+				dx_finest = rmax / grid_shape[0]
+				x_vals = np.linspace(-rmax/2. + dx_finest / 2, rmax/2. - dx_finest / 2, grid_shape[0])
+				y_vals = np.linspace(-rmax/2. + dx_finest / 2, rmax/2. - dx_finest / 2, grid_shape[1])
+				z_vals = np.linspace(-rmax/2. + dx_finest / 2,rmax/2. - dx_finest / 2, grid_shape[2])
 				X, Y, Z = np.meshgrid(x_vals, y_vals, z_vals, indexing='ij')
 
 				# Override density where clouds exist
@@ -470,49 +671,6 @@ class MultiResolutionArray:
 			np.save(density_filename, volume_density)
 			print(f"Updated volume density: {density_filename}")
 
-
-	"""
-	def precompute_volume_densities(self):
-		#""
-		#Precompute and save volume density maps for all existing snapshots at the finest resolution.
-
-		#This function loads all available snapshot levels, sums the density contributions to 
-		#the most refined grid, and saves the final 3D volume density as a `.npy` file.
-		#""
-		snapshot_indices = sorted(set(
-			int(f.split("_")[1]) for f in os.listdir(self.snapshot_dir) if f.startswith("snapshot_")
-		))
-
-		if not snapshot_indices:
-			print("No snapshot files found.")
-			return
-
-		print(f"Precomputing volume densities for {len(snapshot_indices)} snapshots...")
-
-		for snapshot_idx in snapshot_indices:
-			volume_density_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_volume.npy")
-
-			# Skip if already precomputed
-			if os.path.exists(volume_density_filename):
-				continue
-
-			# Load snapshot data
-			snapshot = []
-			for level in range(len(self.grid.rlevels)):
-				filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_level_{level}.npy")
-				if os.path.exists(filename):
-					snapshot.append(np.load(filename))
-
-			if not snapshot:
-				print(f"Warning: No data found for snapshot {snapshot_idx}, skipping.")
-				continue
-
-			# Compute volume density at the finest resolution
-			volume_density = self.compute_volume_density(snapshot)
-
-			# Save the precomputed volume density
-			np.save(volume_density_filename, volume_density)
-			print(f"Saved precomputed volume density: {volume_density_filename}")"""
 	
 	def compute_surface_density(self, volume_density):
 		"""
@@ -524,24 +682,21 @@ class MultiResolutionArray:
 		Returns:
 			np.ndarray: The 2D surface density array.
 		"""
-		dz = self.grid.rmax / volume_density.shape[2]  # Cell depth
-		surface_density = np.sum(self.grid.rho0*volume_density, axis=2) * dz
+		dz = self.spatial_scales[0] / volume_density.shape[2]  # Cell depth
+		surface_density = np.sum(volume_density, axis=2) * dz 
 		return surface_density
 
 # Assuming trajectory_spatial_grid is properly defined
 pc2cm = 3.086e18  # Example constant
 year2s = 3.154e7  # Seconds in a year
-grid = exc.trajectory_grid(rmax=30.0 * pc2cm, rmin=0.2 * pc2cm, drfact=0.5)
+#grid = exc.trajectory_grid(rmax=30.0 * pc2cm, rmin=0.2 * pc2cm, drfact=0.5)
 
 
 # Initialize the MultiResolutionArray§
-mra = MultiResolutionArray(grid)
-
-# Create or load MultiResolutionArray
-mra = MultiResolutionArray(grid)
+mra = MultiResolutionArray()
 
 # Evolve for 10 Myr, storing snapshots every 1 Myr
-mra.evolve(Tend=5.2, fraction_of_tau=0.1, dt_snap=0.2)
+mra.evolve(Tend=10.0, fraction_of_tau=0.1, dt_snap=0.1)
 
 # Create an MP4 video from the snapshots
 mra.create_video(output_filename="evolution.mp4", fps=10)

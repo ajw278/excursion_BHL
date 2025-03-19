@@ -86,7 +86,7 @@ class bound_clump():
 
 		median_density = traj.grid.rho0*np.exp(traj.grid.delta_c[icol] + traj.grid.mu_lnrho[icol])
 		sigmav = np.sqrt(np.sum(traj.grid.Delta_Sv[icol:]))
-		radius = traj.grid.rlevels[icol]
+		radius = traj.grid.rlevels[icol]/2.
 		velocity = traj.v[icol]
 		
 		self.icol = icol
@@ -115,7 +115,7 @@ class bound_clump():
 
 		median_density = grid.rho0*np.exp(grid.delta_c[icol] + grid.mu_lnrho[icol])
 		sigmav = np.sqrt(np.sum(grid.Delta_Sv[icol:]))
-		radius = grid.rlevels[icol]
+		radius = grid.rlevels[icol]/2.
 		velocity = velocity
 		
 		self.icol = icol

@@ -19,21 +19,20 @@ class trajectory_grid
 Generate a grid structure for the random drawing of trajectories. The grid structure comes with all of the physical parameters inbuilt
 """	
 class trajectory_grid():
-	def __init__(self, rmax=100.0*pc2cm, rmin=0.01*pc2cm, drfact=0.95, Ps_v=Ev_k,kappa = Omega_*np.sqrt(2.)/1e6/year2s, Omega=Omega_/1e6/year2s, h=h_*pc2cm, G=Gcgs, rho0=rho0_*Msol2g/(pc2cm)**3, Espect=Ev_k, eta=1.0, cs=cs_*1e5, **kwargs):
-		self.rmax = rmax
-		self.rmin = rmin
+	def __init__(self, rgrid=None, rmax=100.0*pc2cm, rmin=0.01*pc2cm, drfact=0.95, Ps_v=Ev_k,kappa = Omega_*np.sqrt(2.)/1e6/year2s, Omega=Omega_/1e6/year2s, h=h_*pc2cm, G=Gcgs, rho0=rho0_*Msol2g/(pc2cm)**3, Espect=Ev_k, eta=1.0, cs=cs_*1e5, **kwargs):
+			
 		
-		self.drfact = drfact
-		
-		self.setup_grid()
-		
-		self.rmin = rmin
-		self.rmax = rmax
-		self.ksp =  np.logspace(np.log10(1./rmax), np.log10(1./rmin), 2048)
-		self.drfact = drfact
-		
-		
-		self.setup_grid()
+		if rgrid is None:
+			self.rmax = rmax
+			self.rmin = rmin
+			
+			self.drfact = drfact
+
+			self.setup_grid()
+		else:
+			self.setup_grid_manual(rgrid)
+
+		self.ksp =  np.logspace(np.log10(1./self.rmax), np.log10(1./self.rmin), 2048)
 		
 		self.rho0 = rho0
 		self.Espect=Ps_v
@@ -48,6 +47,26 @@ class trajectory_grid():
 		self.setup_qphys()
 		
 	
+	def setup_grid_manual(self, rgrid):
+		nlevel=1
+		self.rmax = rgrid[0]
+		self.rmin = rgrid[-1]
+		
+		self.rlevels = [rgrid[0]]
+		self.dr = [0.0]
+		self.drfact = [1.0]
+		while nlevel<len(rgrid):
+			self.rlevels.append(rgrid[nlevel])
+			dr = self.rlevels[-1] - self.rlevels[-2]
+			self.dr.append(dr)
+			self.drfact.append(self.rlevels[-1] / self.rlevels[-2])
+			nlevel+=1
+		
+		self.nlevels = nlevel
+		
+		self.rlevels = np.array(self.rlevels)
+		self.dr = np.array(self.dr)
+		self.drfact = np.array(self.drfact)
 	
 	def setup_grid(self):
 		nlevel=1
@@ -103,6 +122,7 @@ class trajectory_grid():
 			self.tau_R.append(tau)
 			self.rhocs.append(rc)
 			self.sig2_k.append(s2_k)
+
 		
 		self.rhocs = np.array(self.rhocs)
 		self.sig2_R = np.array(self.sig2_R)
