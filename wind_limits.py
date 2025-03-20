@@ -5,6 +5,7 @@ import stellar_spectra as ss
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.colors import Normalize
 from scipy.interpolate import RegularGridInterpolator
+import os
 
 plt.rc('text', usetex=True)
 
@@ -169,30 +170,48 @@ def create_contour_plot_for_star(mstar_input, ax, norm, cmap,levels=np.arange(1.
 	return contour
 
 def construct_grid(mstar_space=np.logspace(-1., 1., 15), 
-                   age_space=np.logspace(-1., 1.5, 40), 
+                   age_space=np.logspace(-1., 1.5, 20), 
                    mdot_space=np.logspace(-13., -6., 50)):
     
+
+
+	if os.path.isfile('Rwind_grid.npy'):
+
+
+		mstar_space = np.load('Rwind_mstar.npy')
+		age_space = np.load('Rwind_age.npy')
+		mdot_space = np.load('Rwind_mdotacc.npy')
+		Rwinds = np.load('Rwind_grid.npy')
+	else:
+
+		np.save('Rwind_mstar', mstar_space)
+		np.save('Rwind_age', age_space)
+		np.save('Rwind_mdotacc', mdot_space)
+
+		Nmst = len(mstar_space)
+		Nage = len(age_space)
+		Nmdot = len(mdot_space)
+		Rwinds = np.zeros((Nmst, Nmdot, Nage))
+		np.save('Rwind_grid', Rwinds)
+
 	Nmst = len(mstar_space)
 	Nage = len(age_space)
 	Nmdot = len(mdot_space)
-	Rwinds = np.zeros((Nmst, Nmdot, Nage))
-
-	np.save('Rwind_mstar', mstar_space)
-	np.save('Rwind_age', age_space)
-	np.save('Rwind_mdotacc', mdot_space)
-
+	
 	for imstar in range(Nmst):
 		print('Mstar:', mstar_space[imstar])
-		for imdot in range(Nmdot):
-			Mdv = np.ones(len(age_space)) * mdot_space[imdot] 
-			_, ion_frac_acc, LUV_acc = ss.compute_fractional_uv_luminosity_over_time(mstar_space[imstar], 
-						                                             metallicity=0.0, 
-						                                             ages=age_space*1e6, 
-						                                             Mdot_accs=Mdv, 
-						                                             wavelim=2070.0)
-			Rwinds[imstar, imdot, :] = compute_Rwind(mstar_space[imstar]*Msol, LUV_acc, ref_density)
+		if np.all(Rwinds[imstar] == 0):  # Check if all elements in this row are zero
+			print(f'Running calculations for Mstar: {mstar_space[imstar]}')
+			for imdot in range(Nmdot):
+				Mdv = np.ones(len(age_space)) * mdot_space[imdot] 
+				_, ion_frac_acc, LUV_acc = ss.compute_fractional_uv_luminosity_over_time(mstar_space[imstar], 
+																		metallicity=0.0, 
+																		ages=age_space*1e6, 
+																		Mdot_accs=Mdv, 
+																		wavelim=2070.0)
+				Rwinds[imstar, imdot, :] = compute_Rwind(mstar_space[imstar]*Msol, LUV_acc, ref_density)
 
-	np.save('Rwind_grid', Rwinds)
+			np.save('Rwind_grid', Rwinds)
     
 	return Rwinds
 
@@ -395,7 +414,7 @@ def plot_Rcrit():
 	plt.show()
 		
 if __name__=='__main__':
-	#construct_grid()
+	construct_grid()
 	
 	#plot_Rwind(rho0=1e-22)
 	#exit()

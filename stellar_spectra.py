@@ -2,8 +2,9 @@ import os
 
 
 
-os.environ["PYSYN_CDBS"] = "/Users/andrewwinter/Documents/pysyn_data/grp/redcat/trds/"
+#os.environ["PYSYN_CDBS"] = "/Users/andrewwinter/Documents/pysyn_data/grp/redcat/trds/"
 #os.environ["PYSYN_CDBS"] = "/home/awinter/Documents/pysyn_data/grp/redcat/trds/"
+os.environ["PYSYN_CDBS"] = "/Users/andrew/Documents/Stellar_models/"
 
 import stellar_evolution as se
 import pysynphot as S
@@ -64,6 +65,21 @@ def coll_temp_approx(Tstar, F):
 def accretion_luminosity(M_star, R_star, M_dot, r_M):
 	return (G * M_star * M_dot) / R_star * (1 - R_star / r_M)
 
+# Planck function for blackbody radiation
+def planck_wavelength(wavelength_angstrom, T):
+	wavelength_cm = np.asarray(wavelength_angstrom) * 1e-8  # Convert Angstrom to cm
+	x = h * c / (wavelength_cm * k_B * T)  # Dimensionless argument h nu / k T
+
+	# Safe exponentiation to prevent overflow
+	x_safe = np.clip(x, None, 700)  # Clip values above 700 to avoid np.exp overflow
+
+
+	# Use NumPy's where to apply Rayleigh-Jeans for small x, full Planck otherwise
+	B_lambda = (2.0 * k_B * T) / (wavelength_cm**4) * (c**2)
+	B_lambda[x>1e-10] = (2.0 * h * c**2) / (wavelength_cm[x>1e-10]**5) * (1.0 / (np.exp(x_safe[x>1e-10]) - 1.0)) 
+	
+	return B_lambda/1e8   # Convert from per cm to per Angstrom
+
 # Blackbody emission from the shock region
 def shock_flux(wavelength_angstrom, T, area):
 	B_lambda = planck_wavelength(wavelength_angstrom, T)
@@ -83,11 +99,18 @@ def accretion_shock_spectrum_approx(M_star_sol, R_star_sol, M_dot_Msolyr, Tstar,
 	r_M = magnetospheric_radius(M_star, M_dot, R_star, B=1000.0, xi=0.7)
 
 	print('r_m/r_star', r_M/R_star)
+	if r_M<=2.*R_star:
+		print('Warning, truncating R_M below')
+		r_M = 2.*R_star
+	elif r_M>=100.0*R_star:
+		print('Warning, truncating R_M above')
+		r_M = 100.0*R_star
+
 
 	# Free-fall velocity
 	v_ff = free_fall_velocity(M_star, R_star, r_M)
 
-	print('v_ff (km/s)', v_ff/1e5)
+	#print('v_ff (km/s)', v_ff/1e5)
 
 	# Shock temperature
 	#T_shock = shock_temperature(v_ff)
@@ -104,7 +127,7 @@ def accretion_shock_spectrum_approx(M_star_sol, R_star_sol, M_dot_Msolyr, Tstar,
 	# Spectrum from the shock as a function of wavelength
 	spectrum = shock_flux(wavelength_A, T_coll, A_coll)
 
-	print('Normalisation:', L_acc / np.trapz(spectrum, wavelength_A))
+	#print('Normalisation:', L_acc / np.trapz(spectrum, wavelength_A))
 	spectrum *= L_acc / np.trapz(spectrum, wavelength_A)
 
 	return spectrum
@@ -116,12 +139,13 @@ def get_spectra(mstar, age, metallicity=0.0, Mdot_acc=0.0):
 	Teff, log_g, log_L, R, star_mass = se.fetch_stellar_properties(mstar, age)
 	
 	# Compute the stellar spectrum using Castelli & Kurucz atmosphere models
-	sp = S.Icat('ck04models', Teff, metallicity, log_g)
-	try:
+	#sp = S.Icat('ck04models', Teff, metallicity, log_g)
+	sp = S.Icat('phoenix', Teff, metallicity, log_g)
+	"""try:
 		sp = S.Icat('ck04models', Teff, metallicity, log_g)
 	except:
 		print('Warning: using blackbody spectrum because stellar parameters outside of atmosphere model range')
-		sp = S.BlackBody(Teff)
+		sp = S.BlackBody(Teff)"""
 	
 	"""if mstar>0.9:
 		
@@ -168,8 +192,9 @@ def get_spectra(mstar, age, metallicity=0.0, Mdot_acc=0.0):
 		f_acc = interpolate.interp1d(wave_acc, flux_acc, fill_value=0.0, bounds_error=False)
 		
 		acc_cont = f_acc(sp.wave)
+		"""print(Mdot_acc, mstar)
 	
-		"""plt.plot(sp.wave, sp.flux*Lnorm)
+		plt.plot(sp.wave, sp.flux*Lnorm)
 		plt.plot(sp.wave,acc_cont)
 		plt.yscale('log')
 		plt.xscale('log')

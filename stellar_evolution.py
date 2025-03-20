@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 from scipy.interpolate import interp1d
+from scipy.interpolate import griddata
 
 def find_closest_mass_file(directory, target_mass, tol= 0.5):
 	closest_mass = None
@@ -104,7 +105,7 @@ def example_plot(directory, target_mass):
 	plt.tight_layout()
 	plt.show()
 
-def fetch_stellar_properties(minit, age_years, directory='MIST_v1.2_feh_p0.00_afe_p0.0_vvcrit0.0_EEPS'):
+"""def fetch_stellar_properties(minit, age_years, directory='MIST_v1.2_feh_p0.00_afe_p0.0_vvcrit0.0_EEPS'):
 	closest_filename, closest_mass = find_closest_mass_file(directory, minit)
 	
 	filepath = os.path.join(directory, closest_filename)
@@ -112,7 +113,75 @@ def fetch_stellar_properties(minit, age_years, directory='MIST_v1.2_feh_p0.00_af
 
 	Teff, log_g, log_L, R, star_mass = interpolate_stellar_properties(eep_data, age_years)
 
-	return Teff, log_g, log_L, R, star_mass
+	return Teff, log_g, log_L, R, star_mass"""
+
+
+def fetch_stellar_properties(minit, age_years,  directory='MIST_v1.2_feh_p0.00_afe_p0.0_vvcrit0.0_EEPS'):
+	if minit>1.4:
+		closest_filename, closest_mass = find_closest_mass_file(directory, minit)
+		
+		filepath = os.path.join(directory, closest_filename)
+		eep_data = extract_eep_data(filepath)
+
+		Teff, log_g, log_L, R, star_mass = interpolate_stellar_properties(eep_data, age_years)
+
+		return Teff, log_g, log_L, R, star_mass
+	else:
+	
+		# Load the provided CSV file and skip initial header rows
+		file_path = 'BHAC15_tracks.csv'
+		df_clean = pd.read_csv(file_path, comment='!', delim_whitespace=True)
+
+		# Add appropriate column headers based on the description given
+		column_names = [
+		    "M/Ms", "log_t", "Teff", "L/Ls", "g", "R/Rs", "log(Li/Li0)", "log_Tc", "log_ROc",
+		    "Mrad", "Rrad", "k2conv", "k2rad"
+		]
+		df_clean.columns = column_names
+
+		
+		# Convert the mass column to numeric, forcing errors to NaN (which we will drop)
+		df_clean["M/Ms"] = pd.to_numeric(df_clean["M/Ms"], errors='coerce')
+		min_age = 10.**np.amin(df_clean["log_t"])
+		min_mass = np.amin(df_clean["M/Ms"])
+
+		# Drop rows where the mass column has NaN (i.e., non-numeric values were present)
+		df_clean_numeric = df_clean.dropna(subset=["M/Ms"])
+
+		
+		# Filter the DataFrame for relevant columns and convert mass and age to log space
+		df_clean_numeric['log_M/Ms'] = np.log10(df_clean_numeric['M/Ms'])
+
+
+		# Prepare data for interpolation: extract mass, age, and the columns we want to interpolate
+		points = np.array([df_clean_numeric['log_M/Ms'], df_clean_numeric['log_t']]).T
+		teff_values = df_clean_numeric['Teff']
+		logg_values = df_clean_numeric['g']
+		logL_values = df_clean_numeric['L/Ls']
+		radius_values = df_clean_numeric['R/Rs']
+
+		log_mass_target = np.log10(minit)
+		log_age_target = np.log10(age_years)
+
+			# Check if target values are within data range
+		min_log_mass, max_log_mass = np.min(points[:, 0]), np.max(points[:, 0])
+		min_log_age, max_log_age = np.min(points[:, 1]), np.max(points[:, 1])
+
+		if not (min_log_mass <= log_mass_target <= max_log_mass and min_log_age <= log_age_target <= max_log_age):
+			interpolation_method = 'nearest'  # Use nearest neighbor if outside the data range
+		else:
+			interpolation_method = 'linear'  # Use linear interpolation if inside the range
+
+
+
+		# Perform 2D interpolation using griddata in log space
+		interpolated_teff = griddata(points, teff_values, (log_mass_target, log_age_target), method=interpolation_method)
+		interpolated_logg = griddata(points, logg_values, (log_mass_target, log_age_target), method=interpolation_method)
+		interpolated_logL = griddata(points, logL_values, (log_mass_target, log_age_target), method=interpolation_method)
+		interpolated_radius = griddata(points, radius_values, (log_mass_target, log_age_target), method=interpolation_method)
+
+		return interpolated_teff, interpolated_logg, interpolated_logL, interpolated_radius, minit
+
 	
 if __name__=='__main__':
 	# Example usage
