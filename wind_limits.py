@@ -68,7 +68,7 @@ def get_Rwind_interpolator(mstar_input):
 	return Rwind_interpolator
 
 
-def interpolate_Rwind(mstar_input, age_input, mdot_input, rho0=ref_density, Rwind_interpolator=None, debug=False, eps_wind=0.1):
+def interpolate_Rwind(mstar_input, age_input, mdot_input, rho0=ref_density, Rwind_interpolator=None, debug=False, eps_wind=ref_eps_wind):
 	if Rwind_interpolator is None:
 		Rwind_interpolator = get_Rwind_interpolator(mstar_input)
 
@@ -122,7 +122,7 @@ def interpolate_Rwind(mstar_input, age_input, mdot_input, rho0=ref_density, Rwin
 	return interpolated_Rwind*((eps_wind/ref_eps_wind)**2 )* ((ref_density/rho0)**2)
 	
 
-def create_contour_plot_for_star(mstar_input, ax, norm, cmap,levels=np.arange(1., 7.5, 0.5)):
+def create_contour_plot_for_star(mstar_input, ax, norm, cmap,levels=np.arange(1., 7.5, 0.5), eps_wind=ref_eps_wind, rho0=ref_density):
 	try:
 		# Load precomputed grids
 		mstar_space = np.load('Rwind_mstar.npy')
@@ -145,7 +145,7 @@ def create_contour_plot_for_star(mstar_input, ax, norm, cmap,levels=np.arange(1.
 	
 	print(Rwinds.shape)
 
-	age_space_int = np.logspace(-1.0, 1.0, 40)
+	age_space_int = np.logspace(-1.0, 1.5, 40)
 	mdot_space_int = np.logspace(-10., -6., 45)
 
 	# Create meshgrid for age and mdot space
@@ -157,10 +157,11 @@ def create_contour_plot_for_star(mstar_input, ax, norm, cmap,levels=np.arange(1.
 	Rwind_values = Rwind_values.reshape(age_grid.shape)
 	
 	print(np.log10(Rwinds[mstar_idx,:,:]/au))
+	factor = ((eps_wind/ref_eps_wind)**2 )* ((ref_density/rho0)**2)
 	# Create contour plot
-	contour = ax.contourf(age_space_int, mdot_space_int, np.log10(Rwind_values/au), cmap=cmap, norm=norm, levels=levels) # Create contour plot
+	contour = ax.contourf(age_space_int, mdot_space_int, np.log10(Rwind_values*factor/au), cmap=cmap, norm=norm, levels=levels) # Create contour plot
 	print(age_grid_in.shape, mdot_grid_in.shape, Rwinds[mstar_idx,:,:].shape)
-	sc = ax.scatter(age_grid_in, mdot_grid_in*(mstar_input)**2, c=np.log10(Rwinds[mstar_idx,:,:]/au), cmap=cmap, norm=norm, edgecolors='black')
+	sc = ax.scatter(age_grid_in, mdot_grid_in, c=np.log10(factor*Rwinds[mstar_idx,:,:]/au), cmap=cmap, norm=norm, edgecolors='black')
 	
 	ax.set_xscale('log')
 	ax.set_yscale('log')
@@ -434,7 +435,7 @@ if __name__=='__main__':
 	fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
 	# List of stellar masses to plot
-	stellar_masses = [0.6, 0.7, 0.8, 1.0]
+	stellar_masses = [0.2, 0.5, 1.0, 2.0]
 
 	# Plot each stellar mass
 	for mstar, ax in zip(stellar_masses, axes.flatten()):

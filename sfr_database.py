@@ -512,6 +512,176 @@ class sfr_database():
 			plt.show()
 
 			return None
+		
+		def plot_ism_vs_disc_taurus(self, idt=0, nlevs=20, tag='', mlim=3e-5, tplot=2.0, label_=''):
+			"""
+			Plot Gaussian KDE for ISM velocity relative to stars versus disc properties for Taurus.
+			"""
+			
+			m_star = np.array(getattr(self, 'mstevol'+tag)) / Msol2g
+			time = np.array( getattr(self,'tdiscevol'+tag)) / Myr2s
+			print(label_)
+			
+			mdisc = getattr(self, 'mdiscevol'+tag)[idt] / Msol2g
+			mdotst = getattr(self, 'mdotevol'+tag)[idt] * year2s / Msol2g
+			rdisc = getattr(self, 'rdiscevol'+tag)[idt] / au2cm
+			dvism = getattr(self, 'dvBHLevol'+tag)[idt] 
+
+			
+			levels = np.arange(0.0, 0.8, 0.05)
+
+			# Find the closest time snapshot for each tplot
+			itime = np.argmin(np.abs(time - tplot))
+
+
+			dvism = dvism[:, itime]
+
+			# Set up the figure and axes
+			fig, axes = plt.subplots(1, 3, sharex=False, sharey=False, figsize=(10, 3))
+
+			msp = np.logspace(-2., 1.)
+			log_xmin = 0.0
+			log_xmax = 5.0
+			
+			bins = np.linspace(log_xmin-0.5, log_xmax+0.5, 20)
+			log_ymin_dmass = -4.8
+			log_ymax_dmass = -0.5
+
+			regions = ['rOph',  'Taurus', 'Lupus', 'ChamI', 'USco']
+			label = {'rOph': '$\\rho$ Oph', 'Taurus':'Taurus', 'Lupus':'Lupus', 'ChamI': 'Cham I', 'USco':'USco'}
+			# Loop over each time snapshot in tplot
+			# Disc Mass Plot
+			
+			"""region_age = regions[i] 
+			
+			
+			ms_, mdot_, md_, imead_, iupper_, rd_ = self.fetch_obs(region_age,ax=None, plot='md', color='r', s=5, shape='o')
+			
+			idet = md_>1e-20
+			ms_ = ms_[idet]
+			md_ = md_[idet]
+			pdf, be = np.histogram(np.log10(ms_), bins=bins, density=True)
+			pdf = np.array(pdf, dtype='float')
+			pdf /= np.sum(pdf*np.diff(be))
+			bc = (be[1:]+be[:-1])/2.
+			"""
+			
+			xx_dmass, yy_dmass = np.mgrid[log_xmin:log_xmax:100j, log_ymin_dmass:log_ymax_dmass:100j]
+			positions_dmass = np.vstack([xx_dmass.ravel(), yy_dmass.ravel()])
+			iab_dmass = mdisc[:, itime] > mlim
+			log_mdisc_dmass = np.log10(mdisc[iab_dmass, itime])
+			dvism_dmass = dvism[iab_dmass]
+
+
+			"""pdf_model, be = np.histogram(log_m_star_dmass, bins=bins, density=True)
+			pdf_model = np.array(pdf_model, dtype='float')
+			pdf_model /= np.sum(pdf_model*np.diff(be))
+			weight_arr = pdf/(pdf_model+0.1)
+			pdf_func = interpolate.interp1d(bc, weight_arr)"""
+
+			print(dvism_dmass.shape, log_mdisc_dmass.shape)
+			kde_dmass = gaussian_kde(np.vstack([dvism_dmass, log_mdisc_dmass]), weights=np.ones(dvism_dmass.shape))
+			zz_dmass = np.reshape(kde_dmass(positions_dmass).T, xx_dmass.shape)
+			cf_dmass = axes[0].contourf(xx_dmass, 10. ** yy_dmass, zz_dmass, cmap='viridis', levels=nlevs)
+			axes[0].set_ylabel('Disc mass: $M_\mathrm{disc}$ [$M_\odot$]')
+			axes[0].set_yscale('log')
+			axes[0].tick_params(axis='x', which='both', bottom=True, top=True, labelbottom=False)
+			axes[0].tick_params(axis='y', which='both', left=True, right=True, labelleft=True)
+			#axes[0].set_xlim([10. ** log_xmin, 10. ** log_xmax])
+			axes[0].set_ylim([10. ** log_ymin_dmass, 10. ** log_ymax_dmass])
+
+			# Stellar Accretion Rate Plot
+			
+			#ms_, mdot_, md_, imead_, iupper_, rd_ = self.fetch_obs(region_age, ax=axes[0], plot='md', color='r', s=5, shape='o')
+			
+			"""idet = mdot_>1e-20
+			ms_ = ms_[idet]
+			mdot_ = mdot_[idet]
+			pdf, be = np.histogram(np.log10(ms_), bins=bins, density=True)
+			pdf = np.array(pdf, dtype='float')
+			pdf /= np.sum(pdf*np.diff(be))
+			bc = (be[1:]+be[:-1])/2."""
+			
+			
+			log_ymin_mdotst = -12.5
+			log_ymax_mdotst = -6.0
+			xx_mdotst, yy_mdotst = np.mgrid[log_xmin:log_xmax:100j, log_ymin_mdotst:log_ymax_mdotst:100j]
+			positions_mdotst = np.vstack([xx_mdotst.ravel(), yy_mdotst.ravel()])
+			iab_mdotst = mdisc[:, itime] > mlim
+			log_m_star_mdotst = np.log10(m_star[iab_mdotst])
+			log_mdot_mdotst = np.log10(mdotst[iab_mdotst, itime])
+			
+			"""pdf_model, be = np.histogram(log_m_star_mdotst, bins=bins, density=True)
+			pdf_model = np.array(pdf_model, dtype='float')
+			pdf_model /= np.sum(pdf_model*np.diff(be))
+			weight_arr = pdf/(pdf_model+0.1)
+			pdf_func = interpolate.interp1d(bc, weight_arr)
+			weights = pdf_func(log_m_star_mdotst)"""
+
+			print(dvism_dmass)
+			kde_mdotst = gaussian_kde(np.vstack([dvism_dmass, log_mdot_mdotst]), weights=np.ones(dvism_dmass.shape))
+			zz_mdotst = np.reshape(kde_mdotst(positions_mdotst).T, xx_mdotst.shape)
+			cf_mdotst = axes[1].contourf(xx_mdotst, 10. ** yy_mdotst, zz_mdotst, cmap='viridis', levels=nlevs)
+			axes[1].set_ylabel('Stellar accretion rate: $\dot{M}_\mathrm{acc}$ [$M_\odot$]')
+			axes[1].set_yscale('log')
+
+			axes[1].tick_params(axis='x', which='both', bottom=True, top=True, labelbottom=False)
+			axes[1].tick_params(axis='y', which='both', left=True, right=True, labelleft=True)
+			#axes[1].set_xlim([log_xmin, log_xmax])
+
+			# Outer Disc Radius Plot
+			
+			"""ms_, mdot_, md_, imead_, iupper_, rd_ = self.fetch_obs(region_age, ax=axes[1], plot='mdot', color='r', s=5, shape='o')
+			
+			idet = rd_>1e-20
+			ms_ = ms_[idet]
+			rd_ = rd_[idet]
+			pdf, be = np.histogram(np.log10(ms_), bins=bins, density=True)
+			pdf = np.array(pdf, dtype='float')
+			pdf /= np.sum(pdf*np.diff(be))
+			bc = (be[1:]+be[:-1])/2.
+			pdf_func = interpolate.interp1d(bc, pdf)"""
+			
+			
+			log_ymin_rdisc = 0.0
+			log_ymax_rdisc = 3.5
+			xx_rdisc, yy_rdisc = np.mgrid[log_xmin:log_xmax:100j, log_ymin_rdisc:log_ymax_rdisc:100j]
+			positions_rdisc = np.vstack([xx_rdisc.ravel(), yy_rdisc.ravel()])
+			iab_rdisc = (mdisc[:, itime] > mlim)&(rdisc[:, itime]>5.0)
+			log_m_star_rdisc = np.log10(m_star[iab_rdisc])
+			log_rd_rdisc = np.log10(rdisc[iab_rdisc, itime])
+			dvism_rdisc= dvism[iab_rdisc]
+
+			"""pdf_model, be = np.histogram(log_m_star_rdisc, bins=bins, density=True)
+			pdf_model = np.array(pdf_model, dtype='float')
+			pdf_model /= np.sum(pdf_model*np.diff(be))
+			weight_arr = pdf/(pdf_model+0.1)
+			pdf_func = interpolate.interp1d(bc, weight_arr)
+			weights = pdf_func(log_m_star_rdisc)"""
+			
+			kde_rdisc = gaussian_kde(np.vstack([dvism_rdisc, log_rd_rdisc])) #, weights=weights)
+			zz_rdisc = np.reshape(kde_rdisc(positions_rdisc).T, xx_rdisc.shape)
+			cf_rdisc = axes[2].contourf(xx_rdisc, 10. ** yy_rdisc, zz_rdisc, cmap='viridis', levels=nlevs)
+
+			axes[2].set_ylabel('Accretion radius: $R_\mathrm{acc}$ [au]')
+			axes[2].set_xlabel('Star mass: $m_*$ [$M_\odot$]')
+			axes[2].set_yscale('log')
+			axes[2].tick_params(axis='x', which='both', bottom=True, top=True, labelbottom=True)
+			axes[2].tick_params(axis='y', which='both', left=True, right=True, labelleft=True)
+			#axes[2].set_xlim([log_xmin, log_xmax])
+			axes[2,].legend(loc=4, fontsize=7)
+					
+
+			# Add color bar to the last column
+			"""fig.subplots_adjust(right=0.92)
+			cbar_ax = fig.add_axes([0.95, 0.11, 0.02, 0.77])"""
+			#fig.colorbar(cf_rdisc, cax=cbar_ax, label='Model KDE')
+			plt.savefig('disc_ism'+tag+label_+'.pdf', bbox_inches='tight', format='pdf')
+			plt.show()
+
+			return None
+
+
 
 		def plot_all(self, tplot=[0.5, 1.0, 2., 3.0, 5.0], idt=0, mlim=mllim, nlevs=20, tag='', label_=''):
 			m_star = np.array(getattr(self, 'mstevol'+tag)) / Msol2g
@@ -820,6 +990,98 @@ class sfr_database():
 			plt.savefig('Next_evol'+tag+'.pdf', bbox_inches='tight', format='pdf')
 			plt.show()
 
+		def plot_structure_props(self, tplot=2.0, idt=0, cs=cs_*1e5, mlim=mllim,tag=''):
+			"""
+			Create a corner plot where each panel shows a 2D color plot of the fraction of discs with Next > 1e20
+			as a function of pairs of variables: mdisc, mdotacc, mstar_, dv_ISM, and rho_ISM.
+			"""
+			import itertools
+
+			from matplotlib.colors import Normalize
+			
+			time = np.array(getattr(self, 'tdiscevol'+tag)) / Myr2s
+			mdisc = np.array(getattr(self, 'mdiscevol'+tag)[idt])/ Msol2g
+			mdotacc = np.array(getattr(self, 'mdotevol'+tag)[idt]) / Msol2g
+			
+			ide = getattr(self, 'idiscevol'+tag)
+			Next = np.zeros((len(ide), len(time)))
+			
+			mstar_list, dv_ISM_list, rho_ISM_list = [], [], []
+			
+			for iplt, i_ in enumerate(ide):
+				ist = i_[1]
+				ireg = i_[0]
+				mstar_ = self.region_list[ireg]['msts'][ist]/Msol2g 
+				ttmp_ = self.region_list[ireg]['t_evols'][ist]/Myr2s
+				Ratmp_ = self.region_list[ireg]['R_accs'][ist]/au2cm
+				Mdtmp_ = self.region_list[ireg]['Mdot_accs'][ist]*year2s/Msol2g
+				dv_ISM = self.region_list[ireg]['dv_local'][ist]/1e5
+				rho_ISM = self.region_list[ireg]['rho_local'][ist]
+				
+				Nexttmp_ = 2e19 * (Mdtmp_/1e-9)*((Ratmp_/250.)**-0.5) * (mstar_**-0.5)
+				Next[iplt] = np.interp(time, ttmp_, Nexttmp_)
+				
+				mstar_list.append( mstar_)
+				dv_ISM_list.append( np.interp(time, ttmp_, dv_ISM))
+				rho_ISM_list.append( np.interp(time, ttmp_, rho_ISM))
+
+			
+			mstar_list = np.array(mstar_list)
+			dv_ISM_list = np.array(dv_ISM_list)
+			rho_ISM_list = np.array(rho_ISM_list)
+			
+			# Find the closest time snapshot for tplot
+			itime = np.argmin(np.abs(time - tplot))
+			
+			# Define variables for the corner plot
+			variables = {
+				'Log Disc Mass ($M_\odot$)': np.log10(mdisc[:, itime]),
+				'Log Accretion Rate ($M_\odot$ yr$^{-1}$)': np.log10(mdotacc[:, itime]),
+				'Log Stellar Mass ($M_\odot$)': np.log10(mstar_list),
+				'Log ISM Velocity (km s$^{-1}$)': np.log10(dv_ISM_list[:, itime]),
+				'Log ISM Density (g cm$^{-3}$)': np.log10(rho_ISM_list[:, itime])
+			}
+			
+			keys = list(variables.keys())
+			num_vars = len(keys)
+			
+			# Create figure
+			fig, axes = plt.subplots(num_vars, num_vars, figsize=(15, 15), sharex='col', sharey='row')
+			
+			# Bin edges for log-scale
+			num_bins = 5
+			bins = {k: np.linspace(np.nanmin(v), np.nanmax(v), num_bins) for k, v in variables.items()}
+			
+			# Compute fraction of discs with Next > 1e20
+			Next_ = Next[:, itime]
+			has_high_Next = Next_ > 1e20
+			print(np.sum(has_high_Next))
+			
+			norm = Normalize(vmin=0, vmax=0.5)
+			for (i, key1), (j, key2) in itertools.combinations(enumerate(keys), 2):
+				x, y = variables[key1], variables[key2]
+				x_bins, y_bins = bins[key1], bins[key2]
+				print(key1, key2)
+				print(x.shape)
+				print(y.shape)
+				print(x, x_bins)
+				print(y, y_bins)
+				H_all, _, _ = np.histogram2d(x, y, bins=[x_bins, y_bins])
+				H_selected, _, _ = np.histogram2d(x[has_high_Next], y[has_high_Next], bins=[x_bins, y_bins])
+				
+				print(H_all, H_selected)
+				fraction = np.divide(H_selected, H_all, where=(H_all > 0))
+				print(fraction)
+				
+				ax = axes[j, i]
+				pcm = ax.pcolormesh(x_bins, y_bins, fraction.T, shading='auto', cmap='viridis', norm=norm)
+				ax.set_xlabel(key1)
+				ax.set_ylabel(key2)
+            
+				
+			plt.tight_layout()
+			plt.show()
+			
 		
 		def plot_tauacc(self, tplot=[0.1, 0.3, 1.0, 3.0, 9.0], idt=0, cs=cs_*1e5, mlim=mllim,tag=''):
 			m_star = np.array(getattr(self, 'mstevol'+tag)) / Msol2g

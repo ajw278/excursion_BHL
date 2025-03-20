@@ -140,12 +140,11 @@ def get_spectra(mstar, age, metallicity=0.0, Mdot_acc=0.0):
 	
 	# Compute the stellar spectrum using Castelli & Kurucz atmosphere models
 	#sp = S.Icat('ck04models', Teff, metallicity, log_g)
-	sp = S.Icat('phoenix', Teff, metallicity, log_g)
-	"""try:
-		sp = S.Icat('ck04models', Teff, metallicity, log_g)
+	try:
+		sp = S.Icat('phoenix', Teff, metallicity, log_g)
 	except:
 		print('Warning: using blackbody spectrum because stellar parameters outside of atmosphere model range')
-		sp = S.BlackBody(Teff)"""
+		sp = S.BlackBody(Teff)
 	
 	"""if mstar>0.9:
 		

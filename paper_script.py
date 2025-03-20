@@ -37,10 +37,13 @@ if __name__=='__main__':
 
 
 	#Genererate density histories for at least 10000 stars in at least 500 different regions
-	sfdb = excursion.get_density_history(GMCmin=10.0, GMCmax=1000.0, Nregions=100, Nstars=5000, tag='')
+	sfdb = excursion.get_density_history(GMCmin=10.0, GMCmax=1000.0, Nregions=500, Nstars=5000, tag='')
 
+	tag = sfdb.calc_discevol(redraw=True, Nsample=2000, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_', wind=True, eps_wind=0.1)
+	tag = sfdb.calc_discevol(redraw=True, Nsample=2000, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_', wind=False, eps_wind=0.1)
 
 	print('\n\n *******Wind, 0 initial disc mass*******\n\n')
+
 
 
 	"""#Test results for a substantial initial disc mass
@@ -57,7 +60,9 @@ if __name__=='__main__':
 	#For a representative sample of 500 stars, calculate the disc evolution
 	tag = sfdb.calc_discevol(redraw=False, Nsample=500, minit=0.0, minitdisp=0.0, mlim=250., ptag='m250_', wind=False, eps_wind=0.1)
 	print('Tag:', tag)
-	
+
+	sfdb.plot_structure_props(tplot=2.0, tag=tag)
+	sfdb.plot_ism_vs_disc_taurus(tag=tag, tplot=2.0, label_='')
 	
 	#Plot the BHL accretion rate histories
 	sfdb.plot_accretion_rates()

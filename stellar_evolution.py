@@ -4,6 +4,8 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 
+STMOD_DIR = '/Users/andrew/Documents/Stellar_models/'
+
 def find_closest_mass_file(directory, target_mass, tol= 0.5):
 	closest_mass = None
 	closest_filename = None
@@ -116,11 +118,11 @@ def example_plot(directory, target_mass):
 	return Teff, log_g, log_L, R, star_mass"""
 
 
-def fetch_stellar_properties(minit, age_years,  directory='MIST_v1.2_feh_p0.00_afe_p0.0_vvcrit0.0_EEPS'):
+def fetch_stellar_properties(minit, age_years,  directory='MIST_v1.2_feh_p0.00_afe_p0.0_vvcrit0.4_EEPS'):
 	if minit>1.4:
-		closest_filename, closest_mass = find_closest_mass_file(directory, minit)
+		closest_filename, closest_mass = find_closest_mass_file(STMOD_DIR+directory, minit)
 		
-		filepath = os.path.join(directory, closest_filename)
+		filepath = os.path.join(STMOD_DIR+directory, closest_filename)
 		eep_data = extract_eep_data(filepath)
 
 		Teff, log_g, log_L, R, star_mass = interpolate_stellar_properties(eep_data, age_years)
