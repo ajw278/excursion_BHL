@@ -289,7 +289,7 @@ def plot_Rstrom(rho0=1e-24):
 	
 
 
-def plot_Rwind(rho0=1e-24):
+def plot_Rwind(rho0=ref_density, eps_wind=ref_eps_wind):
 
 	import proplot as pplt
 	# Create a grid of stellar mass and luminosity
@@ -300,7 +300,7 @@ def plot_Rwind(rho0=1e-24):
 	Mstar_grid, Lstar_grid = np.meshgrid(Mstar, Lstar, indexing='ij')
 
 	# Compute Rcrit for each point in the grid
-	Rcrit_grid = compute_Rwind(Mstar_grid, Lstar_grid, rho0)
+	Rcrit_grid = compute_Rwind(Mstar_grid, Lstar_grid, rho0, eps_wind=eps_wind)
 
 	# Plotting
 	#fig, ax = plt.subplots(figsize=(10, 8))
@@ -417,7 +417,7 @@ def plot_Rcrit():
 if __name__=='__main__':
 	construct_grid()
 	
-	#plot_Rwind(rho0=1e-22)
+	#plot_Rwind(rho0=1e-22 )
 	#exit()
 	# Load data to determine the normalization range
 	mstar_space = np.load('Rwind_mstar.npy')
@@ -439,7 +439,7 @@ if __name__=='__main__':
 
 	# Plot each stellar mass
 	for mstar, ax in zip(stellar_masses, axes.flatten()):
-		contour = create_contour_plot_for_star(mstar, ax, norm, cmap)
+		contour = create_contour_plot_for_star(mstar, ax, norm, cmap, eps_wind=0.01)
 
 	# Adjust layout and add colorbar
 	plt.tight_layout()

@@ -263,6 +263,7 @@ class MultiResolutionArray:
 			self.resolutions[ilevel] = Ddelta_new
 			self.resolutions_v[ilevel] = Ddeltav_new
 
+	
 
 	def evolve(self, Tend, fraction_of_tau=0.1, dt_snap=0.2):
 		"""
@@ -304,12 +305,12 @@ class MultiResolutionArray:
 			t += dt
 			self.t = t
 
-			# Evolve clouds
+			"""# Evolve clouds
 			for cloud in self.clouds:
 				if not cloud.dispersed:
 					cloud.evolve(t, rejuvinate=False)
 
-			self.find_collapse()
+			self.find_collapse()"""
 
 			if t >= next_snapshot_time:
 				print('Saving...')
@@ -320,45 +321,6 @@ class MultiResolutionArray:
 				next_snapshot_time += dt_snap_sec
 
 		print(f"Evolution completed: Total time = {Tend} Myr")
-
-	def save_snapshot_old(self, snapshot_idx, time):
-		"""
-		Save the finest resolution density and cloud properties.
-
-		Args:
-			snapshot_idx (int): Index of the snapshot.
-			time (float): Time of the snapshot (seconds).
-
-		Returns:
-			None
-		"""
-		density_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_density.npy")
-		clouds_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_clouds.npy")
-
-		# Compute finest density
-		finest_density, finest_velocity = self.evaluate_at_finest()
-
-		# Save density
-		np.save(density_filename, finest_density)
-
-		# Save cloud properties
-		if self.clouds:
-			survclouds= [] 
-			for i, cloud in enumerate(self.clouds):
-				if not cloud.dispersed:
-					survclouds.append(cloud)
-
-			cloud_data = np.zeros((8, len(survclouds)))  # 4 properties: (pos, size, vel, density)
-			for i, cloud in enumerate(survclouds):
-				cloud_data[:3, i] = cloud.r  # Position
-				cloud_data[3, i] = cloud.R    # Size
-				cloud_data[4:7, i] = cloud.v
-				cloud_data[7, i] = cloud.rho_med
-
-			np.save(clouds_filename, cloud_data)
-
-		print(f"Snapshot {snapshot_idx} saved at time {time / year2s / 1e6:.2f} Myr")
-
 	
 	def save_snapshot(self, snapshot_idx, time):
 		"""
@@ -372,51 +334,15 @@ class MultiResolutionArray:
 			None
 		"""
 		density_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_density.npy")
-		clouds_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_clouds.npy")
-
+		velocity_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_velocity.npy")
+		
+		lnrho_norm, v =  self.evaluate_at_finest()
 		# Compute finest density
-		volume_density = self.grid.rho0*np.exp(self.evaluate_at_finest())
-
-		# Save cloud properties
-		if self.clouds:
-			survclouds= [] 
-			for i, cloud in enumerate(self.clouds):
-				if not cloud.dispersed:
-					survclouds.append(cloud)
-
-			cloud_data = np.zeros((8, len(survclouds)))  # 4 properties: (pos, size, vel, density)
-			for i, cloud in enumerate(survclouds):
-				cloud_data[:3, i] = cloud.r  # Position
-				cloud_data[3, i] = cloud.R    # Size
-				cloud_data[4:7, i] = cloud.v
-				cloud_data[7, i] = cloud.rho_med
-
-			np.save(clouds_filename, cloud_data)
-
-		# Load clouds
-		if os.path.exists(clouds_filename):
-			cloud_data = np.load(clouds_filename)
-			positions = cloud_data[:3, :].T
-			radii = cloud_data[3, :]
-			#velocities = cloud_data[4:7, :].T
-			densities = cloud_data[7, :]
-
-			# Create grid arrays
-			grid_shape = volume_density.shape
-			rmax = self.spatial_scales[0]
-			dx_finest = 2 * rmax / grid_shape[0]
-			x_vals = np.linspace(-rmax + dx_finest / 2, rmax - dx_finest / 2, grid_shape[0])
-			y_vals = np.linspace(-rmax + dx_finest / 2, rmax - dx_finest / 2, grid_shape[1])
-			z_vals = np.linspace(-rmax + dx_finest / 2, rmax - dx_finest / 2, grid_shape[2])
-			X, Y, Z = np.meshgrid(x_vals, y_vals, z_vals, indexing='ij')
-
-			# Override density where clouds exist
-			for pos, R, rho in zip(positions, radii, densities):
-				dist_squared = (X - pos[0])**2 + (Y - pos[1])**2 + (Z - pos[2])**2
-				volume_density[dist_squared <= R**2] = rho
+		volume_density = self.grid.rho0*np.exp(lnrho_norm)
 
 		# Save updated density
 		np.save(density_filename, volume_density)
+		np.save(velocity_filename, v)
 
 		print(f"Snapshot {snapshot_idx} saved at time {time / year2s / 1e6:.2f} Myr")
 
@@ -552,131 +478,7 @@ class MultiResolutionArray:
 
 		return coords
 
-	def cloud_check(self, position, radius):
-		"""
-		Check if the given position and radius overlap with any existing clouds.
-		
-		Args:
-			position (np.ndarray): The (x, y, z) position of the new potential cloud.
-			radius (float): The radius of the new potential cloud.
-		
-		Returns:
-			int: -1 if the position is within an existing cloud,
-					index i if the new cloud overlaps with an existing cloud,
-					-2 if no nearby clouds exist.
-		"""
-		for i, cloud in enumerate(self.clouds):
-			if cloud.dispersed:
-				continue
-			
-			position_i = cloud.r
-			radius_i = cloud.R
-			
-			# Compute distance between cloud centers
-			distance = np.linalg.norm(position - position_i)
-			
-			if distance <= radius_i:
-				return -1  # Position is within an existing cloud
-			elif distance <= radius_i + radius:
-				return i  # Overlaps with an existing cloud
-			
-		return -2  # No nearby cloud detected
-
-
-	def find_collapse(self, **kwargs):
-		"""
-		"""
-
-		if not hasattr(self, 'last_formation_time'):
-			# Initialize formation tracking array (set to -inf so all regions are initially "unlocked")
-			self.next_formation_time = [np.full(res.shape, -np.inf) for res in self.resolutions[:self.imaxcoll]]
-
-		delta_sum_ = None
-
-		if delta_sum_ is None:
-			delta_sum_ = np.zeros(self.resolutions[0].shape)
-
-		delta_sum_ += np.sum(self.super_resolutions)
-		print('Super resolution:', np.sum(self.super_resolutions))
-
-		inew=0
-		for ir_, level_array in enumerate(self.resolutions[:self.imaxcoll]):
-			ir = self.spatial_level[ir_]
-			#print(self.grid.rlevels[ir]/pc2cm)
-			if ir_>1:
-				delta_c = self.grid.delta_c[ir]
-				factor =  np.array(level_array.shape)/np.array(delta_sum_.shape)
-				upsampled_array = zoom(delta_sum_, factor, order=0, grid_mode=False)
-				delta_sum = upsampled_array+level_array
-
-				#Check for any collapse on larger scales
-				#self.icollapsed[ir_][delta_sum>1e5] = 1
-
-				#Identify new collapses
-				icollapse = (delta_sum>delta_c) #&(self.icollapsed[ir_]==0)
-
-				for coll_ind in np.swapaxes(np.where(icollapse), 0, 1):
-					position = self.get_spatial_coordinates(ir_, coll_ind)
-					t_current = self.t  # Current simulation time
-
-					if t_current<self.next_formation_time[ir_][tuple(coll_ind)]:
-						print('Turbulent scale cannot produce more SFRs')
-						continue
-
-					"""locked=False
-					# Check if this cell (or finer cells) are locked
-					for coarse_ir_ in range(2, ir_)[::-1]:  # Only check coarser scales
-						coarse_ir = self.spatial_level[coarse_ir_]
-						coarse_factor = np.array(self.resolutions[coarse_ir_].shape) / np.array(self.resolutions[ir_].shape)
-						coarse_idx = (np.array(coll_ind) * coarse_factor).astype(int)
-						print(coll_ind, coarse_idx, coarse_factor)
-						#coarse_idx = np.clip((np.array(coll_ind) / coarse_factor).astype(int), 0, np.array(self.resolutions[coarse_ir].shape) - 1)
-
-						# If a collapse happened recently at a coarser scale, block it
-						if t_current - self.last_formation_time[coarse_ir_][tuple(coarse_idx)] < self.grid.tau_R[coarse_ir]:
-							locked=True
-							break  # Skip this cell, it's still in "lock" phase
-
-					if locked:
-						continue"""
-					
-
-					check = self.cloud_check(position, self.grid.rlevels[ir]/2.)
-					if check!=-2:
-						continue 
-					
-					# If allowed, form new cloud
-					self.clouds.append(cl.bound_clump(**kwargs))
-					inew +=1
-
-					# Assign cloud properties
-					velocity = 2.*np.random.normal(size=3) * km2cm
-					self.clouds[-1].form_nontraj(ir, self.grid, position, velocity, t_current)
-					print('New cloud:', self.grid.rlevels[ir]/pc2cm)
-
-					# Record formation time at this level
-					self.next_formation_time[ir_][tuple(coll_ind)] = t_current + self.grid.tau_R[ir]
-
-					# **Propagate Lock to Finer Levels**
-					for finer_ir_ in range(ir_ + 1, len(self.resolutions[:self.imaxcoll])):
-						finer_grid_shape = self.resolutions[finer_ir_].shape
-						finer_factor = np.array(finer_grid_shape) / np.array(self.resolutions[ir_].shape)
-
-						# Compute corresponding finer grid indices
-						finer_indices = (np.array(coll_ind) * finer_factor).astype(int)
-
-						# Apply lock to finer grid cells using `tau_R[ir]`
-						slices = tuple(slice(fi, fi + 1) for fi in finer_indices)  # Select the finer region
-						self.next_formation_time[finer_ir_][slices] = t_current + self.grid.tau_R[ir]
-
-				#self.icollapsed[ir_][icollapse] = 1
-
-				#Add large number to collapsed delta in order to flag that smaller scale cells 
-				#have already collapsed
-				#delta_sum[icollapse] = 1e9
-		print('Collapse check complete. %d new collapses.'%inew)
-
-
+	
 	def precompute_volume_densities(self):
 		"""
 		Precompute and save volume densities, overriding grid cells where clouds exist.
@@ -693,36 +495,9 @@ class MultiResolutionArray:
 
 		for snapshot_idx in snapshot_indices:
 			density_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_density.npy")
-			clouds_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_clouds.npy")
-
+			
 			# Load density
 			volume_density = self.grid.rho0*np.exp(np.load(density_filename))
-
-			# Load clouds
-			if os.path.exists(clouds_filename):
-				cloud_data = np.load(clouds_filename)
-				positions = cloud_data[:3, :].T
-				radii = cloud_data[3, :]
-				#velocities = cloud_data[4:7, :].T
-				densities = cloud_data[7, :]
-
-				# Create grid arrays
-				grid_shape = volume_density.shape
-				rmax = self.spatial_scales[0]
-				dx_finest = rmax / grid_shape[0]
-				x_vals = np.linspace(-rmax/2. + dx_finest / 2, rmax/2. - dx_finest / 2, grid_shape[0])
-				y_vals = np.linspace(-rmax/2. + dx_finest / 2, rmax/2. - dx_finest / 2, grid_shape[1])
-				z_vals = np.linspace(-rmax/2. + dx_finest / 2,rmax/2. - dx_finest / 2, grid_shape[2])
-				X, Y, Z = np.meshgrid(x_vals, y_vals, z_vals, indexing='ij')
-
-				# Override density where clouds exist
-				for pos, R, rho in zip(positions, radii, densities):
-					dist_squared = (X - pos[0])**2 + (Y - pos[1])**2 + (Z - pos[2])**2
-					volume_density[dist_squared <= R**2] = rho
-
-			# Save updated density
-			np.save(density_filename, volume_density)
-			print(f"Updated volume density: {density_filename}")
 
 	
 	def compute_surface_density(self, volume_density):
@@ -746,8 +521,7 @@ year2s = 3.154e7  # Seconds in a year
 
 
 # Initialize the MultiResolutionArray§
-mra = MultiResolutionArray()
-
+mra = MultiResolutionArray(rmax=200.0, rspatial=2.0, rmin=0.005)
 # Evolve for 10 Myr, storing snapshots every 1 Myr
 mra.evolve(Tend=10.0, fraction_of_tau=0.1, dt_snap=0.1)
 

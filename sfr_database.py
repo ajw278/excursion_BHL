@@ -1000,87 +1000,278 @@ class sfr_database():
 			from matplotlib.colors import Normalize
 			
 			time = np.array(getattr(self, 'tdiscevol'+tag)) / Myr2s
+			#disc masses 
 			mdisc = np.array(getattr(self, 'mdiscevol'+tag)[idt])/ Msol2g
-			mdotacc = np.array(getattr(self, 'mdotevol'+tag)[idt]) / Msol2g
+
+			#stellar accretion rates (disc to star)
+			mdotacc = np.array(getattr(self, 'mdotevol'+tag)[idt]) *year2s/Msol2g
+
+			#Disc radius
+			rdisc = np.array(getattr(self, 'rdiscevol'+tag)[idt])
 			
 			ide = getattr(self, 'idiscevol'+tag)
+
+			#column density of extended structures (initialize)
 			Next = np.zeros((len(ide), len(time)))
 			
 			mstar_list, dv_ISM_list, rho_ISM_list = [], [], []
+			R_acc_list = []
+			Mdot_BHL_list = []
 			
 			for iplt, i_ in enumerate(ide):
 				ist = i_[1]
 				ireg = i_[0]
+				#stellar mass
 				mstar_ = self.region_list[ireg]['msts'][ist]/Msol2g 
+
+				#time series
 				ttmp_ = self.region_list[ireg]['t_evols'][ist]/Myr2s
+
+				#Radius from which star accretes new material from the ISM
 				Ratmp_ = self.region_list[ireg]['R_accs'][ist]/au2cm
+
+				#Rate at which material is accreted from the ISM (ISM to disc)
 				Mdtmp_ = self.region_list[ireg]['Mdot_accs'][ist]*year2s/Msol2g
+
+				#Relative velocity of the ISM 
 				dv_ISM = self.region_list[ireg]['dv_local'][ist]/1e5
+
+				#Density of the local ISM  
 				rho_ISM = self.region_list[ireg]['rho_local'][ist]
 				
+				#Column density of infalling (extended) structure -- g cm^-2
 				Nexttmp_ = 2e19 * (Mdtmp_/1e-9)*((Ratmp_/250.)**-0.5) * (mstar_**-0.5)
 				Next[iplt] = np.interp(time, ttmp_, Nexttmp_)
 				
 				mstar_list.append( mstar_)
 				dv_ISM_list.append( np.interp(time, ttmp_, dv_ISM))
 				rho_ISM_list.append( np.interp(time, ttmp_, rho_ISM))
+				R_acc_list.append(np.interp(time, ttmp_, Ratmp_))
+				Mdot_BHL_list.append(np.interp(time, ttmp_, Mdtmp_))
 
 			
 			mstar_list = np.array(mstar_list)
 			dv_ISM_list = np.array(dv_ISM_list)
+			R_acc_list = np.array(R_acc_list)
+			Mdot_BHL_list = np.array(Mdot_BHL_list)
+
+			#Impose limits for extreme cases for plotting convenience
+			dv_ISM_list[dv_ISM_list<0.1] = 0.1
+			dv_ISM_list[dv_ISM_list>10.0] = 10.0
+
 			rho_ISM_list = np.array(rho_ISM_list)
+
+			#Impose limits for extreme cases for plotting convenience
+			rho_ISM_list[rho_ISM_list<1e-24] = 1e-24
+			rho_ISM_list[rho_ISM_list>1e-20] = 1e-20
 			
 			# Find the closest time snapshot for tplot
 			itime = np.argmin(np.abs(time - tplot))
+			iab_dmass= mdisc[:, itime]>mlim
 			
 			# Define variables for the corner plot
 			variables = {
-				'Log Disc Mass ($M_\odot$)': np.log10(mdisc[:, itime]),
-				'Log Accretion Rate ($M_\odot$ yr$^{-1}$)': np.log10(mdotacc[:, itime]),
-				'Log Stellar Mass ($M_\odot$)': np.log10(mstar_list),
-				'Log ISM Velocity (km s$^{-1}$)': np.log10(dv_ISM_list[:, itime]),
-				'Log ISM Density (g cm$^{-3}$)': np.log10(rho_ISM_list[:, itime])
+				'Log Disc Mass ($M_\odot$)': np.log10(mdisc[iab_dmass, itime]),
+				'Log Stellar Accretion Rate ($M_\odot$ yr$^{-1}$)': np.log10(mdotacc[iab_dmass, itime]),
+				'Log ISM Accretion Rate ($M_\odot$ yr$^{-1}$)': np.log10(Mdot_BHL_list[iab_dmass, itime]),
+				'Log Stellar Mass ($M_\odot$)': np.log10(mstar_list[iab_dmass]),
+				'Log ISM Velocity (km s$^{-1}$)': np.log10(dv_ISM_list[iab_dmass, itime]),
+				'Log ISM Density (g cm$^{-3}$)': np.log10(rho_ISM_list[iab_dmass, itime])
 			}
 			
 			keys = list(variables.keys())
 			num_vars = len(keys)
 			
 			# Create figure
-			fig, axes = plt.subplots(num_vars, num_vars, figsize=(15, 15), sharex='col', sharey='row')
+			fig, axes = plt.subplots(num_vars-1, num_vars-1, figsize=(13, 13), sharex='col', sharey='row', gridspec_kw={'wspace': 0.02, 'hspace': 0.02})
 			
 			# Bin edges for log-scale
-			num_bins = 5
+			num_bins = 6
 			bins = {k: np.linspace(np.nanmin(v), np.nanmax(v), num_bins) for k, v in variables.items()}
 			
 			# Compute fraction of discs with Next > 1e20
-			Next_ = Next[:, itime]
-			has_high_Next = Next_ > 1e20
+			Next_ = Next[iab_dmass, itime]
+			rho_ = rho_ISM_list[iab_dmass, itime]
+			rdisc_ = rdisc[iab_dmass,itime]
+			MdBHL_ = Mdot_BHL_list[iab_dmass, itime]
+			NISM_= rho_ * np.pi*(rdisc_*au2cm)
+			Racc_ = R_acc_list[iab_dmass, itime]
+
+			print(Racc_, rdisc_)
+			print(NISM_)
+
+			#Condition to see infall
+			#has_high_Next = (NISM_>1e20)| ((Next_ > 1e20)&(Racc_*au2cm>rdisc_/2.))
+
+			has_high_Next =(Next_ > 1e20)
+
 			print(np.sum(has_high_Next))
 			
-			norm = Normalize(vmin=0, vmax=0.5)
+			norm = Normalize(vmin=0, vmax=0.6)
 			for (i, key1), (j, key2) in itertools.combinations(enumerate(keys), 2):
 				x, y = variables[key1], variables[key2]
 				x_bins, y_bins = bins[key1], bins[key2]
+				print(i, j)
 				print(key1, key2)
-				print(x.shape)
-				print(y.shape)
-				print(x, x_bins)
-				print(y, y_bins)
 				H_all, _, _ = np.histogram2d(x, y, bins=[x_bins, y_bins])
 				H_selected, _, _ = np.histogram2d(x[has_high_Next], y[has_high_Next], bins=[x_bins, y_bins])
 				
 				print(H_all, H_selected)
-				fraction = np.divide(H_selected, H_all, where=(H_all > 0))
+				fraction = np.divide(H_selected, H_all, where=(H_all > 1))
+				fraction[H_all<=1.0] = np.nan
 				print(fraction)
 				
-				ax = axes[j, i]
+				ax = axes[j-1, i]
 				pcm = ax.pcolormesh(x_bins, y_bins, fraction.T, shading='auto', cmap='viridis', norm=norm)
-				ax.set_xlabel(key1)
-				ax.set_ylabel(key2)
-            
+				if j - 1 == axes.shape[0] - 1:
+					ax.set_xlabel(key1)
+				if i==0:
+					ax.set_ylabel(key2)
+			
+				ax.tick_params(direction='in', top=True, right=True, left=True, bottom=True)
+			fig.subplots_adjust(right=0.85, bottom=0.1, top=0.9)
+			cbar_ax = fig.add_axes([0.88, 0.1, 0.05, 0.85])
+			fig.colorbar(pcm, cax=cbar_ax, label='Extended CO fraction')
+
+			for i in range(num_vars - 1):
+				for j in range(i + 1, num_vars - 1):
+					fig.delaxes(axes[i, j])
+				
 				
 			plt.tight_layout()
+			plt.savefig('corner_infall.pdf', bbox_inches='tight', format='pdf')
 			plt.show()
+
+			 # Define spectral type bins and corresponding mass boundaries in Msun
+			spectral_types = ['B', 'A', 'F', 'G', 'K0', 'K2', 'K4', 'K6', 'M0', 'M2', 'M4', 'M6', 'M8', 'L']
+			mass_bins = [16, 3.2, 1.5, 1.05, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.08, 0.02]  # decreasing order
+			mstar_sel = mstar_list[iab_dmass]
+
+
+			frac_high = []
+			frac_low = []
+
+			frac_extended = []
+
+			Racc_median = []
+			Racc_low = []
+			Racc_high = []
+
+			for i in range(len(mass_bins) - 1):
+				mmin = mass_bins[i + 1]
+				mmax = mass_bins[i]
+				in_bin = (mstar_sel >= mmin) & (mstar_sel < mmax)
+
+				Rbin = Racc_[in_bin]
+				Rdiscbin =  rdisc_[in_bin]
+				Nenv_bin = NISM_[in_bin]
+				infall_bin = has_high_Next[in_bin]
+
+				
+				if np.sum(in_bin) > 0:
+					frac = np.sum(infall_bin) / np.sum(in_bin)
+				else:
+					frac = np.nan
+				frac_extended.append(frac)
+
+				Rbin = Rbin[infall_bin]
+				if len(Rbin) > 0:
+					Racc_median.append(np.median(Rbin))
+					#Racc_low.append(np.percentile(Rbin, 16))
+					#Racc_high.append(np.percentile(Rbin, 84))
+					Racc_low.append(np.percentile(Rbin, 10))
+					Racc_high.append(np.percentile(Rbin, 90))
+				else:
+					Racc_median.append(np.nan)
+					Racc_low.append(np.nan)
+					Racc_high.append(np.nan)
+
+
+			fig, ax1 = plt.subplots(figsize=(10, 5))
+			ax1.step(spectral_types[:-1], frac_extended, where='mid', lw=2, color='k', label='Fraction Extended CO Structure')
+			#ax1.step(spectral_types[:-1], frac_high, where='mid', color='r', lw=2, label='On filament')
+			#ax1.step(spectral_types[:-1], frac_low, where='mid', color='purple',  lw=2, label='Off filament', linestyle='--')
+			ax1.set_xlabel('Spectral Type')
+			ax1.set_ylabel('Fraction Extended CO Structure')
+			ax1.set_ylim(0, 0.4)
+			ax1.legend(loc='upper left')
+			ax1.grid(True, linestyle='--', alpha=0.5)
+
+			ax2 = ax1.twinx()
+			ax2.errorbar(spectral_types[:-1], Racc_median, yerr=[np.array(Racc_median) - np.array(Racc_low),
+																	np.array(Racc_high) - np.array(Racc_median)],
+							fmt='o-', color='tab:red', label='Accretion Radius')
+			ax2.set_ylabel('Accretion Radius [AU])')
+			ax2.set_yscale('log')
+			ax2.legend(loc='upper right')
+
+			plt.tight_layout()
+			plt.savefig('infall_spT.pdf',bbox_inches='tight', format='pdf')
+			plt.show()
+
+			# Thresholds for accretion rate in Msol/yr
+			thresholds = [1e-9, 1e-8]
+			colors = ['tab:blue', 'tab:green']
+			labels = [r'$>\!10^{-9}$ $M_\odot$/yr', r'$>\!10^{-8}$ $M_\odot$/yr']
+
+			spectral_types = ['B', 'A', 'F', 'G', 'K0', 'K2', 'K4', 'K6', 'M0', 'M2', 'M4', 'M6', 'M8', 'L']
+			mass_bins = [16, 3.2, 1.5, 1.05, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.08, 0.02]  # decreasing order
+			fig, ax = plt.subplots(figsize=(10, 5))
+
+			for thresh, color, label in zip(thresholds, colors, labels):
+				frac_thresh = []
+
+				for i in range(len(mass_bins) - 1):
+					mmin = mass_bins[i + 1]
+					mmax = mass_bins[i]
+					in_bin = (mstar_sel >= mmin) & (mstar_sel < mmax)
+					
+					# accretion rates in bin
+					acc_bin = MdBHL_[in_bin]
+					if np.sum(in_bin) > 0:
+						frac = np.sum(acc_bin > thresh) / np.sum(in_bin)
+					else:
+						frac = np.nan
+					frac_thresh.append(frac)
+
+				ax.step(spectral_types[:-1], frac_thresh, where='mid', lw=2, color=color, label=label)
+
+			ax.set_xlabel('Spectral Type')
+			ax.set_ylabel('Fraction with ISM Accretion Rate Above Threshold')
+			ax.set_ylim(0, 1)
+			ax.grid(True, linestyle='--', alpha=0.5)
+			ax.legend(loc='upper right')
+
+			plt.tight_layout()
+			plt.savefig('infall_fraction_vs_spt.pdf', bbox_inches='tight', format='pdf')
+			plt.show()
+
+			import pandas as pd
+
+			# Assign spectral type to each stellar mass
+			spec_type_list = []
+			for m in mstar_sel:
+				matched = False
+				for i in range(len(mass_bins) - 1):
+					mmin = mass_bins[i + 1]
+					mmax = mass_bins[i]
+					if m >= mmin and m < mmax:
+						spec_type_list.append(spectral_types[i])
+						matched = True
+						break
+				if not matched:
+					spec_type_list.append("Unknown")
+
+			# Create DataFrame
+			df = pd.DataFrame({
+				'Stellar Mass [Msun]': mstar_sel,
+				'ISM Accretion Rate [Msun/yr]': MdBHL_,
+				'Accretion Radius [AU]': Racc_,
+				'Spectral Type': spec_type_list
+			})
+
+			# Save as CSV
+			df.to_csv('infall_table.csv', index=False)
 			
 		
 		def plot_tauacc(self, tplot=[0.1, 0.3, 1.0, 3.0, 9.0], idt=0, cs=cs_*1e5, mlim=mllim,tag=''):
