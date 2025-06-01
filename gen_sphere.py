@@ -521,7 +521,7 @@ year2s = 3.154e7  # Seconds in a year
 
 
 # Initialize the MultiResolutionArray§
-mra = MultiResolutionArray(rmax=200.0, rspatial=2.0, rmin=0.005)
+mra = MultiResolutionArray(rmax=200.0, rspatial=2.0, rmin=0.02)
 # Evolve for 10 Myr, storing snapshots every 1 Myr
 mra.evolve(Tend=10.0, fraction_of_tau=0.1, dt_snap=0.1)
 
