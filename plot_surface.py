@@ -5,7 +5,9 @@ import os
 import argparse
 
 def load_field(base_path, snapshot_idx, radius_pc, field):
-    fname = os.path.join(base_path, f"snapshot_{snapshot_idx:04d}_r{radius_pc:.2f}_{field}_healpix.npy")
+    fname_raw = f"snapshot_{snapshot_idx:04d}_r{radius_pc:.2f}_{field}_healpix.npy"
+    print(f"Loading field '{field}' for snapshot {snapshot_idx} at radius {radius_pc} pc: {fname_raw}")
+    fname = os.path.join(base_path, fname_raw)
     if not os.path.exists(fname):
         raise FileNotFoundError(f"Missing file: {fname}")
     return np.load(fname)
@@ -18,15 +20,20 @@ def plot_single_panel(data, title, unit, vmin=None, vmax=None, cmap='viridis'):
 def plot_multipanel(base_path, snapshot_idx, radius_pc, cmap='viridis', vlims=None, save=None):
     fig = plt.figure(figsize=(12, 10))
     fields = ['rho', 'vx', 'vy', 'vz']
-    titles = [r'log $N_{\rm H}$', r'$v_x$', r'$v_y$', r'$v_z$']
+    titles = [r'log $\rho$', r'$v_x$', r'$v_y$', r'$v_z$']
 
     for i, (field, title) in enumerate(zip(fields, titles), 1):
         data = load_field(base_path, snapshot_idx, radius_pc, field)
         if field == 'rho':
             data = np.log10(data)
-            unit = r"log $N_{\rm H}$"
+            unit = "g cm$^{-3}$"
         else:
-            unit = r"km/s"  # Adjust if needed
+            unit = r"km/s"  
+            data /= 1e5
+
+        print(data)
+
+        print(data.shape, data.dtype, np.nanmin(data), np.nanmax(data))
 
         vmin, vmax = None, None
         if vlims and field in vlims:
@@ -56,6 +63,7 @@ def plot_shell_field(base_path, snapshot_idx, radius_pc, field='rho', cmap='viri
             vmin, vmax = np.percentile(data[~np.isnan(data)], [10, 90])
     else:
         unit = 'km/s'
+        data /= 1e5
     plot_single_panel(data, title, unit, vmin=vmin, vmax=vmax, cmap=cmap)
 
 if __name__ == "__main__":

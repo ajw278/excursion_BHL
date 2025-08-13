@@ -29,7 +29,10 @@ class MultiResolutionArray:
 		pc2cm = 3.086e18  # Example constant
 		self.define_spatial_scales(rmax*pc2cm, rspatial*pc2cm, rmin*pc2cm, dr, n0)
 		self.grid = exc.trajectory_grid(self.scales)
+		print(self.grid.rlevels)
 		self.generate_resolutions()
+		print(f"Initialized MultiResolutionArray with {len(self.resolutions)} resolutions.")
+
 
 		self.snapshot_dir = snapshot_dir
 		if imaxcoll is None:
@@ -91,8 +94,13 @@ class MultiResolutionArray:
 		"""
 		super_resolutions = []
 		super_resolutions_v = []
+
+		print(f"Generating resolutions for {len(self.super_scales)} super resolutions and {len(self.spatial_scales)} spatial resolutions.")
+
+
 		for ir, r in enumerate(self.super_scales):
 			# Create and initialize the grid for this resolution level
+			print(f"Initializing super resolution level {ir}")
 			level_grid, level_grid_v = self.initialize_resolution(ir, 1)
 			super_resolutions.append(level_grid)
 			super_resolutions_v.append(level_grid_v)
@@ -105,12 +113,15 @@ class MultiResolutionArray:
 
 		for ir, r in enumerate(self.spatial_scales):
 			# Define the resolution for the current level based on the length scale
+			print(f"Initializing spatial resolution level {ir} with size {self.n_res[ir]}x{self.n_res[ir]}x{self.n_res[ir]}")
 			resolution_size = self.n_res[ir]
 			
 			# Create and initialize the grid for this resolution level
 			level_grid, level_grid_v = self.initialize_resolution(self.spatial_level[ir], resolution_size)
 			resolutions.append(level_grid)
 			resolutions_v.append(level_grid_v)
+		
+		print(f"Generated {len(super_resolutions)} super resolutions and {len(resolutions)} spatial resolutions.")
 
 		self.super_resolutions = super_resolutions
 		self.super_resolutions_v = super_resolutions_v
@@ -301,9 +312,11 @@ class MultiResolutionArray:
 		next_snapshot_time = t + dt_snap_sec
 
 		while t < Tend_sec:
+			print(t / year2s / 1e6, "Myr", end="\r")
 			self.update_resolutions(dt)
 			t += dt
 			self.t = t
+
 
 			"""# Evolve clouds
 			for cloud in self.clouds:
@@ -335,6 +348,8 @@ class MultiResolutionArray:
 		"""
 		density_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_density.npy")
 		velocity_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_velocity.npy")
+		coords_filename = os.path.join(self.snapshot_dir, "snapshot_coords.npy")
+
 		
 		lnrho_norm, v =  self.evaluate_at_finest()
 		# Compute finest density
@@ -343,6 +358,16 @@ class MultiResolutionArray:
 		# Save updated density
 		np.save(density_filename, volume_density)
 		np.save(velocity_filename, v)
+
+		# Save the coordinate array (1D physical positions), only once
+		if not os.path.exists(coords_filename):
+			finest_level = len(self.resolutions) - 1
+			N = self.resolutions[finest_level].shape[0]
+			rmax = self.spatial_scales[0] * self.n_res[0]  # total physical length
+			dx = rmax / N
+			coords_1d = (np.arange(N) + 0.5) * dx - rmax / 2.0
+			np.save(coords_filename, coords_1d)
+			print(f"Saved grid coordinates to {coords_filename}")
 
 		print(f"Snapshot {snapshot_idx} saved at time {time / year2s / 1e6:.2f} Myr")
 
@@ -395,7 +420,8 @@ class MultiResolutionArray:
 
 		# Setup figure
 		fig, ax = plt.subplots(figsize=(8, 6))
-		rmax  = self.spatial_scales[0]
+		rmax  = self.spatial_scales[0]*self.n_res[0]
+		print(f"rmax: {rmax/pc2cm:.2f} pc")
 		extent = [-rmax / pc2cm /2., rmax / pc2cm/2.,-rmax / pc2cm /2., rmax / pc2cm/2.]
 		im = ax.imshow(np.log10(first_surface_density.T), extent=extent, origin="lower", aspect="auto", cmap="hot", vmin=vmin, vmax=vmax)
 
@@ -521,7 +547,7 @@ year2s = 3.154e7  # Seconds in a year
 
 
 # Initialize the MultiResolutionArray§
-mra = MultiResolutionArray(rmax=200.0, rspatial=2.0, rmin=0.02)
+mra = MultiResolutionArray(rmax=200.0, rspatial=1.0, rmin=0.001, dr=0.2)
 # Evolve for 10 Myr, storing snapshots every 1 Myr
 mra.evolve(Tend=10.0, fraction_of_tau=0.1, dt_snap=0.1)
 
