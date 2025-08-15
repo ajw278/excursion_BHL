@@ -2,6 +2,13 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
+
+# Gravitational constant in CGS
+G_CGS = 6.67430e-8
+MSUN = 1.98847e33
+PC2CM = 3.086e18
+AU2CM = 1.495978707e13
+
 def get_or_compute_v_ref(
     snapshot_dir: str,
     coords_file: str = "sph_coords_equalarea.npz",
@@ -272,10 +279,6 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Gravitational constant in CGS
-G_CGS = 6.67430e-8
-MSUN = 1.98847e33
-PC2CM = 3.086e18
 
 def compute_bhl_radius_per_shell(
     snapshot_dir: str,
@@ -369,7 +372,6 @@ def compute_bhl_radius_per_shell(
 
     return r_c, r_BHL, v_shell, speed
 
-PC2CM = 3.086e18
 
 def plot_bhl_and_shell_velocity(
     snapshot_dir: str,
@@ -381,8 +383,8 @@ def plot_bhl_and_shell_velocity(
     coords_file: str = "sph_coords_equalarea.npz",
     lnrho_pattern: str = "snapshot_{:04d}_lnrho_eq.npy",
     v_pattern: str = "snapshot_{:04d}_v_eq.npy",
-    r_units: str = "pc",        # 'pc' or 'cm' (x-axis)
-    rBHL_units: str = "pc",     # 'pc' or 'cm' (top y-axis)
+    r_units: str = "au",        # 'pc' or 'cm' (x-axis)
+    rBHL_units: str = "au",     # 'pc' or 'cm' (top y-axis)
     v_units: str = "km/s",      # 'cm/s' or 'km/s' (bottom y-axis)
     figsize=(7.8, 6.8),
     save: str | None = None,
@@ -415,6 +417,9 @@ def plot_bhl_and_shell_velocity(
     elif r_units.lower() == "cm":
         x = r_c
         xlabel = r"$r\ \mathrm{[cm]}$"
+    elif r_units.lower() == "au":
+        x = r_c / AU2CM
+        xlabel = r"$r\ \mathrm{[au]}$"
     else:
         raise ValueError("r_units must be 'pc' or 'cm'")
 
@@ -427,6 +432,10 @@ def plot_bhl_and_shell_velocity(
         yB = r_BHL
         yB_label = r"$r_{\rm BHL}\ \mathrm{[cm]}$"
         yR = r_c
+    elif r_units.lower() == "au":
+        yB = r_BHL / AU2CM
+        yB_label = r"$r_{\rm BHL}\ \mathrm{[au]}$"
+        yR = r_c / AU2CM
     else:
         raise ValueError("rBHL_units must be 'pc' or 'cm'")
 
@@ -482,7 +491,7 @@ def plot_shell_angular_momentum(
     coords_file: str = "sph_coords_equalarea.npz",
     lnrho_pattern: str = "snapshot_{:04d}_lnrho_eq.npy",
     v_pattern: str = "snapshot_{:04d}_v_eq.npy",
-    x_units: str = "pc",         # 'pc' or 'cm'
+    x_units: str = "au",         # 'pc' or 'cm'
     logx: bool = True,
     figsize=(7.5, 6.0),
     save: str | None = None,
@@ -510,13 +519,15 @@ def plot_shell_angular_momentum(
     )
 
     # x-axis in requested units
-    pc2cm = 3.086e18
     if x_units.lower() == "pc":
-        r_plot = r_c / pc2cm
+        r_plot = r_c / PC2CM
         r_label = r"$r\ \mathrm{[pc]}$"
     elif x_units.lower() == "cm":
         r_plot = r_c
         r_label = r"$r\ \mathrm{[cm]}$"
+    elif x_units.lower() == "au":
+        r_plot = r_c / AU2CM
+        r_label = r"$r\ \mathrm{[au]}$"
     else:
         raise ValueError("x_units must be 'pc' or 'cm'")
 
@@ -556,21 +567,577 @@ def plot_shell_angular_momentum(
         plt.show()
 
 
+def bhl_inflow_properties(
+    snapshot_dir: str,
+    snapshot_idx: int,
+    M_star: float,
+    mass_units: str = "Msun",                      # 'Msun' or 'g'
+    coords_file: str = "sph_coords_equalarea.npz",
+    lnrho_pattern: str = "snapshot_{:04d}_lnrho_eq.npy",
+    v_pattern: str     = "snapshot_{:04d}_v_eq.npy",
+    # star-frame velocity:
+    v_ref: np.ndarray | None = None,
+    v_ref_mode: str | None = None,                 # e.g. "first_snapshot_inner"
+    v_ref_path: str = "v_ref.npy",
+    init_snapshot_idx: int = 0,
+    shell_index_for_ref: int = 0,
+    # gas sound speed (for BHL denominator):
+    c_s: float | np.ndarray | None = None          # [cm/s], scalar or (Nr,)
+):
+    """
+    Compute BHL accretion rate and accreted angular-momentum rate for one snapshot.
+
+    Steps:
+      1) Density-weighted mean shell velocity -> speed(r)
+      2) r_BHL(r) = 2 G M_star / (speed(r)^2 + c_s(r)^2)
+      3) Find r_cut = max r_c with r_c < r_BHL(r_c)  (largest shell inside its local BHL radius)
+      4) Volume-weighted mean density inside r <= r_cut:
+            rho_bar = sum( rho * V ) / sum( V )
+         where V_shell,pix = r^2 * dΩ * dr, dΩ = 4π/npix
+      5) Mass-weighted mean velocity inside r <= r_cut:
+            v_avg_vec = sum( v * rho * V ) / sum( rho * V )
+            v_avg = |v_avg_vec|
+      6) Mdot_BHL = rho_bar * π * (r_cut)^2 * v_avg
+      7) Specific angular momentum averaged over the same volume:
+            j_avg_vec = sum( (r × v) * rho * V ) / sum( rho * V )
+         Then angular-momentum accretion rate:
+            Jdot_acc = j_avg_vec * Mdot_BHL
+
+    Returns dict with keys:
+      r_c, dr, npix, r_BHL, r_cut, ir_cut, rho_bar, v_avg_vec, v_avg, Mdot_BHL,
+      j_avg_vec, Jdot_acc, included_mask
+    """
+    # ---- load coords ----
+    cc_path = coords_file if os.path.isabs(coords_file) else os.path.join(snapshot_dir, coords_file)
+    cc = np.load(cc_path)
+    r_c  = np.asarray(cc["r"], dtype=np.float64)         # (Nr,)
+    Nr   = r_c.size
+
+    if "U" in cc:
+        U = np.asarray(cc["U"], dtype=np.float64)        # (npix,3)
+        npix = U.shape[0]
+    else:
+        theta = np.asarray(cc["theta"], dtype=np.float64)
+        phi   = np.asarray(cc["phi"], dtype=np.float64)
+        st = np.sin(theta)
+        U = np.stack([st*np.cos(phi), st*np.sin(phi), np.cos(theta)], axis=-1)
+        npix = U.shape[0]
+    dOmega = 4.0*np.pi/float(npix)
+
+    # radial thicknesses
+    if "r_edges" in cc:
+        r_edges = np.asarray(cc["r_edges"], dtype=np.float64)
+    else:
+        if Nr < 2:
+            raise ValueError("Need >=2 radial bins or provide r_edges in coords.")
+        q = r_c[1]/r_c[0]
+        if not np.allclose(r_c[1:]/r_c[:-1], q, rtol=1e-6, atol=0.0):
+            raise ValueError("r centers not log-uniform; please store r_edges.")
+        e0 = r_c[0]/np.sqrt(q)
+        r_edges = e0 * (q ** np.arange(Nr+1))
+    dr = r_edges[1:] - r_edges[:-1]                     # (Nr,)
+
+    # ---- load fields ----
+    lnrho = np.load(os.path.join(snapshot_dir, lnrho_pattern.format(snapshot_idx)))   # (Nr, npix)
+    v     = np.load(os.path.join(snapshot_dir, v_pattern.format(snapshot_idx)))       # (Nr, npix, 3)
+    if lnrho.shape != (Nr, npix) or v.shape != (Nr, npix, 3):
+        raise ValueError("Field shapes do not match coords (Nr, npix[,3]).")
+
+    # ---- resolve v_ref (star velocity) if requested ----
+    if v_ref is None and v_ref_mode is not None:
+        v_ref = get_or_compute_v_ref(
+            snapshot_dir=snapshot_dir,
+            coords_file=coords_file,
+            lnrho_pattern=lnrho_pattern,
+            v_pattern=v_pattern,
+            v_ref_path=v_ref_path,
+            mode=v_ref_mode,
+            init_snapshot_idx=init_snapshot_idx,
+            shell_index=shell_index_for_ref,
+        )
+    if v_ref is None:
+        v_ref = np.zeros(3, dtype=np.float64)
+    v = v - np.asarray(v_ref, dtype=np.float64).reshape(1,1,3)
+
+    # ---- shell speed (density-weighted mean) for r_BHL ----
+    # reuse our earlier vectorized helper:
+    v_shell, speed, r_c_check, _, _ = compute_shell_density_weighted_velocity(
+        snapshot_dir=snapshot_dir, snapshot_idx=snapshot_idx, coords_file=coords_file,
+        lnrho_pattern=lnrho_pattern, v_pattern=v_pattern,  v_ref=v_ref
+    )
+    if not np.allclose(r_c_check, r_c):
+        raise RuntimeError("Radius arrays mismatch.")
+
+    # sound speed term
+    if c_s is None:
+        cs2 = 0.0
+    else:
+        c_s = np.asarray(c_s, dtype=np.float64)
+        cs2 = (c_s**2) if c_s.ndim == 1 else float(c_s)**2
+
+    # star mass
+    if mass_units.lower() == "msun":
+        Mstar = M_star * MSUN
+    elif mass_units.lower() in ("g","gram","grams"):
+        Mstar = float(M_star)
+    else:
+        raise ValueError("mass_units must be 'Msun' or 'g'")
+
+    v2 = speed**2
+    denom = v2 + cs2
+    with np.errstate(divide='ignore', invalid='ignore'):
+        r_BHL = 2.0 * G_CGS * Mstar / denom
+        r_BHL[~np.isfinite(r_BHL)] = 0.0
+
+    # ---- choose cutoff r_cut: largest r_c with r_c < r_BHL(r_c) ----
+    inside = r_c < r_BHL
+    if not np.any(inside):
+        # No shell inside BHL radius -> no accretion per this rule
+        zvec = np.zeros(3, dtype=np.float64)
+        return {
+            "r_c": r_c, "dr": dr, "npix": npix, "r_BHL": r_BHL,
+            "r_cut": 0.0, "ir_cut": -1, "included_mask": inside,
+            "rho_bar": 0.0, "v_avg_vec": zvec, "v_avg": 0.0,
+            "Mdot_BHL": 0.0, "j_avg_vec": zvec, "Jdot_acc": zvec
+        }
+
+    ir_cut = np.where(inside)[0].max()
+    r_cut  = r_c[ir_cut]
+
+    # ---- integrate over volume r <= r_cut ----
+    Nr_in = ir_cut + 1
+    rho =  np.exp(lnrho[:Nr_in, :], dtype=np.float64)          # (Nr_in, npix)
+    v_in = v[:Nr_in, :, :]                                            # (Nr_in, npix, 3)
+
+    r2   = (r_c[:Nr_in]**2).reshape(Nr_in, 1)                         # (Nr_in,1)
+    vol_weight = r2 * dOmega * dr[:Nr_in].reshape(Nr_in, 1)           # (Nr_in,1)
+    V_pix = vol_weight                                                # (Nr_in,1) factor
+
+    # volume-weighted density mean (weights = V)
+    V_shell = (r2 * dOmega * dr[:Nr_in].reshape(Nr_in,1))             # (Nr_in,1)
+    rho_bar = np.sum(rho * V_shell) / np.sum(V_shell)
+
+    # mass-weighted mean velocity (weights = rho * V)
+    w = rho * V_pix                                                   # (Nr_in, npix)
+    wsum = np.sum(w)
+    v_avg_vec = np.sum(v_in * w[:, :, None], axis=(0,1)) / max(wsum, 1e-300)
+    v_avg     = float(np.linalg.norm(v_avg_vec))
+
+    # BHL accretion rate
+    Mdot_BHL = rho_bar * np.pi * (r_cut**2) * v_avg                   # [g/s], if rho0 in g/cm^3 and v in cm/s
+
+    # specific angular momentum averaged over the same volume
+    # r vector at each pixel inside:
+    U = U  # (npix,3) from above
+    rU = (r_c[:Nr_in].reshape(Nr_in,1,1)) * U.reshape(1,npix,3)       # (Nr_in, npix, 3)
+    rxv = np.cross(rU, v_in, axis=2)                                  # (Nr_in, npix, 3)
+    j_avg_vec = np.sum(rxv * w[:, :, None], axis=(0,1)) / max(wsum, 1e-300)
+
+    # angular momentum accretion rate
+    Jdot_acc = j_avg_vec * Mdot_BHL                                   # [g cm^2 / s^2]
+
+    return {
+        "r_c": r_c, "dr": dr, "npix": npix, "r_BHL": r_BHL,
+        "r_cut": r_cut, "ir_cut": int(ir_cut), "included_mask": inside,
+        "rho_bar": float(rho_bar), "v_avg_vec": v_avg_vec, "v_avg": float(v_avg),
+        "Mdot_BHL": float(Mdot_BHL), "j_avg_vec": j_avg_vec, "Jdot_acc": Jdot_acc
+    }
+
+
+def evolve_disc_J_M_Rtheta(
+    snapshot_dir: str,
+    snapshot_indices,
+    M_star: float,
+    J_disc0: np.ndarray,                      # [g cm^2 / s]
+    M_disc0: float,                           # [g]
+    p: float = 1.0,                     # power-law index for Σ profile
+    mass_units: str = "g",
+    coords_file: str = "sph_coords_equalarea.npz",
+    lnrho_pattern: str = "snapshot_{:04d}_lnrho_eq.npy",
+    v_pattern: str     = "snapshot_{:04d}_v_eq.npy",
+    v_ref: np.ndarray | None = None,
+    v_ref_mode: str | None = None,
+    v_ref_path: str = "v_ref.npy",
+    init_snapshot_idx: int = 0,
+    shell_index_for_ref: int = 0,
+    c_s: float | np.ndarray | None = None,
+    times_file: str = "snapshot_times.npy"
+):
+    """
+    Integrate J_disc(t) and M_disc(t) forward using BHL Jdot and Mdot between snapshots.
+    Also compute R_out(t) from M_disc(t) using Sigma profile and the tilt angle
+    theta(t) = angle(J0, J(t)) in degrees.
+
+    Returns:
+      times_myr   : (Nt,)
+      J_hist      : (Nt, 3)  [g cm^2 / s]
+      M_hist      : (Nt,)    [g]
+      Rout_hist   : (Nt,)    [cm]
+      theta_deg   : (Nt,)    [deg]
+      Mdot_hist   : (Nt,)    [g/s]
+      rcut_hist   : (Nt,)    [cm]
+    """
+
+    if not mass_units.lower() in ("g", "gram", "grams"):
+        raise ValueError("mass_units must be 'g' -- 'Msun' not implemented yet, G hardcoded.")
+
+    # times
+    t_path = os.path.join(snapshot_dir, times_file)
+    if not os.path.exists(t_path):
+        raise FileNotFoundError(f"Missing times file: {t_path}")
+    times_all = np.load(t_path).astype(float)
+
+    idx = np.asarray(snapshot_indices, dtype=int)
+    times = times_all[idx]
+    Nt = idx.size
+
+    J_hist   = np.zeros((Nt, 3), dtype=np.float64)
+    M_hist   = np.zeros(Nt, dtype=np.float64)
+    Rout_hist= np.zeros(Nt, dtype=np.float64)
+    theta_deg= np.zeros(Nt, dtype=np.float64)
+    Mdot_hist= np.zeros(Nt, dtype=np.float64)
+    rcut_hist= np.zeros(Nt, dtype=np.float64)
+
+    J = np.asarray(J_disc0, dtype=np.float64).copy()
+    M = float(M_disc0)
+
+    if J_disc0.all() == 0.0:
+        J0set=False
+    else:
+        J0 = np.asarray(J, dtype=np.float64)
+        J0_norm = np.linalg.norm(J0)
+        J0set=True
+
+    for k, s in enumerate(idx):
+        props = bhl_inflow_properties(
+            snapshot_dir=snapshot_dir, snapshot_idx=int(s),
+            M_star=M_star,  mass_units=mass_units,
+            coords_file=coords_file, lnrho_pattern=lnrho_pattern, v_pattern=v_pattern,
+            v_ref=v_ref, v_ref_mode=v_ref_mode, v_ref_path=v_ref_path,
+            init_snapshot_idx=init_snapshot_idx, shell_index_for_ref=shell_index_for_ref,
+            c_s=c_s
+        )
+        Jdot = props["Jdot_acc"]       # (3,)
+        Mdot = props["Mdot_BHL"]       # scalar [g/s]
+        rcut = props["r_cut"]          # [cm]
+
+        # step forward (forward Euler)
+        if k < Nt - 1:
+            dt = times[k+1] - times[k]
+        else:
+            dt = (times[k] - times[k-1]) if k > 0 else 0.0
+
+        J += Jdot * dt
+        M += Mdot * dt
+
+        if k==0 and not J0set:
+            J0 = np.asarray(J, dtype=np.float64)
+            J0_norm = np.linalg.norm(J0)
+            j0 = J0 / J0_norm
+
+        # derived: outer radius from Σ profile
+        Rout = solve_Rout_for_mass(M, J, M_star,p, G=G_CGS)
+
+        # tilt angle wrt initial J0
+        Jnorm = np.linalg.norm(J)
+        if J0_norm > 0 and Jnorm > 0:
+            j  = J / Jnorm
+            cosang = np.clip(np.dot(j0,j), -1.0, 1.0)
+            theta = np.degrees(np.arccos(cosang))
+        else:
+            theta = np.nan
+
+        # store
+        J_hist[k, :] = J
+        M_hist[k]    = M
+        Rout_hist[k] = Rout
+        theta_deg[k] = theta
+        Mdot_hist[k] = Mdot
+        rcut_hist[k] = rcut
+
+    times_myr = times / (3.154e7 * 1e6)
+    return times_myr, J_hist, M_hist, Rout_hist, theta_deg, Mdot_hist, rcut_hist
+
+'''
+def evolve_disc_angular_momentum(
+    snapshot_dir: str,
+    snapshot_indices: list[int] | np.ndarray,
+    M_star: float,
+    J_disc0: np.ndarray,                             # initial disc angular momentum [g cm^2 / s]
+    mass_units: str = "Msun",
+    coords_file: str = "sph_coords_equalarea.npz",
+    lnrho_pattern: str = "snapshot_{:04d}_lnrho_eq.npy",
+    v_pattern: str     = "snapshot_{:04d}_v_eq.npy",
+    v_ref: np.ndarray | None = None,
+    v_ref_mode: str | None = None,
+    v_ref_path: str = "v_ref.npy",
+    init_snapshot_idx: int = 0,
+    shell_index_for_ref: int = 0,
+    c_s: float | np.ndarray | None = None,
+    times_file: str = "snapshot_times.npy"          # seconds since t=0
+):
+    """
+    Time-integrate the disc angular momentum by adding dJ = Jdot_acc * dt between snapshots.
+
+    Returns:
+      times_myr   : (Nt,) times in Myr (aligned to snapshot_indices)
+      J_disc_hist : (Nt, 3) disc angular momentum vector over time
+      Mdot_hist   : (Nt,)   BHL accretion rate history [g/s]
+      r_cut_hist  : (Nt,)   cutoff radius history [cm]
+    """
+    # load times (seconds)
+    t_path = os.path.join(snapshot_dir, times_file)
+    if not os.path.exists(t_path):
+        raise FileNotFoundError(f"Missing times file: {t_path}")
+    times_all = np.load(t_path)                  # (N_all,)
+    times_all = np.asarray(times_all, dtype=float)
+
+    idx = np.asarray(snapshot_indices, dtype=int)
+    times = times_all[idx]
+    Nt = idx.size
+
+    J_disc_hist = np.zeros((Nt, 3), dtype=np.float64)
+    Mdot_hist  = np.zeros(Nt, dtype=np.float64)
+    rcut_hist  = np.zeros(Nt, dtype=np.float64)
+
+    J = np.asarray(J_disc0, dtype=np.float64).copy()
+
+    for k, s in enumerate(idx):
+        props = bhl_inflow_properties(
+            snapshot_dir=snapshot_dir, snapshot_idx=int(s),
+            M_star=M_star,  mass_units=mass_units,
+            coords_file=coords_file, lnrho_pattern=lnrho_pattern, v_pattern=v_pattern,
+            v_ref=v_ref, v_ref_mode=v_ref_mode, v_ref_path=v_ref_path,
+            init_snapshot_idx=init_snapshot_idx, shell_index_for_ref=shell_index_for_ref,
+            c_s=c_s
+        )
+        Jdot = props["Jdot_acc"]          # (3,)
+        Mdot = props["Mdot_BHL"]
+        rcut = props["r_cut"]
+
+        # time step to next snapshot (forward Euler on [t_k, t_{k+1}))
+        if k < Nt - 1:
+            dt = times[k+1] - times[k]
+        else:
+            # last step: if you want a trailing update length, you can reuse previous dt; else zero
+            dt = (times[k] - times[k-1]) if k > 0 else 0.0
+
+        J += Jdot * dt
+
+        J_disc_hist[k, :] = J
+        Mdot_hist[k]      = Mdot
+        rcut_hist[k]      = rcut
+
+    times_myr = times / (3.154e7 * 1e6)
+    return times_myr, J_disc_hist, Mdot_hist, rcut_hist
+'''
+'''
+def plot_disc_J_evolution(
+    times_myr: np.ndarray,
+    J_disc_hist: np.ndarray,
+    figsize=(8.2, 6.2),
+    save: str | None = None
+):
+    """
+    Plot |J_disc| and components vs time.
+    """
+    Jx, Jy, Jz = J_disc_hist[:,0], J_disc_hist[:,1], J_disc_hist[:,2]
+    Jmag = np.linalg.norm(J_disc_hist, axis=1)
+
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=figsize, sharex=True, height_ratios=[2.0, 2.0])
+
+    ax0.plot(times_myr, Jmag, lw=2.0)
+    ax0.set_ylabel(r"$|\mathbf{J}_{\rm disc}| \; [\mathrm{g\,cm^2\,s^{-1}}]$")
+    ax0.grid(True, ls=":", alpha=0.6)
+
+    ax1.plot(times_myr, Jx, lw=1.6, label=r"$J_x$")
+    ax1.plot(times_myr, Jy, lw=1.6, label=r"$J_y$")
+    ax1.plot(times_myr, Jz, lw=1.6, label=r"$J_z$")
+    ax1.set_xlabel(r"$t\ \mathrm{[Myr]}$")
+    ax1.set_ylabel(r"$\mathbf{J}_{\rm disc}\ \mathrm{[g\,cm^2\,s^{-1}]}$")
+    ax1.grid(True, ls=":", alpha=0.6)
+    ax1.legend(frameon=False, ncol=3)
+
+    plt.tight_layout()
+    if save:
+        plt.savefig(save, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+    else:
+        plt.show()
+'''
+
+PC2CM = 3.086e18
+
+def plot_disc_J_M_Rtheta(
+    times_myr: np.ndarray,
+    J_hist: np.ndarray,
+    M_hist: np.ndarray,
+    Rout_hist: np.ndarray,
+    theta_deg: np.ndarray,
+    show_components: bool = True,
+    r_units: str = "pc",
+    m_units: str = "msun",
+    figsize=(8.4, 10.2),
+    save: str | None = None
+):
+    """
+    Panels:
+      (1) |J_disc|
+      (2) J components (optional)
+      (3) M_disc
+      (4) R_out
+      (5) tilt angle theta(J0, J)
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    Jmag = np.linalg.norm(J_hist, axis=1)
+    Jx, Jy, Jz = J_hist[:,0], J_hist[:,1], J_hist[:,2]
+
+    # panel count
+    n_pan = 5 if show_components else 4
+    heights = [1.4, 1.2, 1.2, 1.2, 1.0] if show_components else [1.6, 1.3, 1.3, 1.1]
+
+    fig, axes = plt.subplots(n_pan, 1, figsize=figsize, sharex=True, height_ratios=heights)
+    ax0 = axes[0]
+
+    # |J|
+    ax0.plot(times_myr, Jmag, lw=2.0)
+    ax0.set_ylabel(r"$|\mathbf{J}_{\rm disc}|$ [g cm$^2$ s$^{-1}$]")
+    ax0.grid(True, ls=":", alpha=0.6)
+
+    row = 1
+    if show_components:
+        ax1 = axes[row]; row += 1
+        ax1.plot(times_myr, Jx, lw=1.5, label=r"$J_x$")
+        ax1.plot(times_myr, Jy, lw=1.5, label=r"$J_y$")
+        ax1.plot(times_myr, Jz, lw=1.5, label=r"$J_z$")
+        ax1.set_ylabel(r"$\mathbf{J}_{\rm disc}$ [g cm$^2$ s$^{-1}$]")
+        ax1.grid(True, ls=":", alpha=0.6)
+        ax1.legend(frameon=False, ncol=3)
+
+    # M_disc
+    axM = axes[row]; row += 1
+
+    if m_units.lower() == "msun":
+        axM.set_ylabel(r"$M_{\rm disc}$ [M$_\odot$]")
+        M_plot = M_hist / MSUN
+    else:
+        axM.set_ylabel(r"$M_{\rm disc}$ [g]")
+        M_plot = M_hist
+
+    axM.plot(times_myr, M_plot, lw=2.0)
+    axM.grid(True, ls=":", alpha=0.6)
+
+    # R_out
+    axR = axes[row]; row += 1
+    if r_units.lower() == "pc":
+        Rout_plot = Rout_hist / PC2CM
+        axR.set_ylabel(r"$R_{\rm out}$ [pc]")
+    elif r_units.lower() == "au":
+        Rout_plot = Rout_hist / AU2CM
+        axR.set_ylabel(r"$R_{\rm out}$ [au]")
+    else:
+        Rout_plot = Rout_hist
+        axR.set_ylabel(r"$R_{\rm out}$ [cm]")
+
+    
+    axR.plot(times_myr, Rout_plot, lw=2.0)
+    axR.grid(True, ls=":", alpha=0.6)
+
+    # tilt angle
+    axT = axes[row]
+    axT.plot(times_myr, theta_deg, lw=2.0)
+    axT.set_ylabel(r"$\theta$ [deg]")
+    axT.set_xlabel(r"$t$ [Myr]")
+    axT.grid(True, ls=":", alpha=0.6)
+
+    plt.tight_layout()
+    if save:
+        plt.savefig(save, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+    else:
+        plt.show()
+
+
+
+def solve_Rout_for_mass(M_disk, L_vec, M_star, p, G = G_CGS):
+    """
+    Compute the outer radius R_max of a Keplerian disk with a power-law surface density profile,
+    in the limit R_in -> 0.
+
+    Parameters
+    ----------
+    M_disk : float
+        Total mass of the disk [kg].
+    L_z : float
+        Total angular momentum of the disk [kg m^2 / s].
+    M_star : float
+        Mass of the central star [kg].
+    p : float
+        Power-law index of the surface density profile, Sigma ∝ R^{-p}.
+        Must satisfy 0 <= p < 2 and p < 2.5 for convergence.
+
+    Returns
+    -------
+    R_max : float
+        Outer radius of the disk [m].
+    """
+    L_z = np.linalg.norm(L_vec)  # magnitude of angular momentum vector
+    if not (0 <= p < 2):
+        raise ValueError("p must be in the range 0 <= p < 2 for convergence.")
+    
+    factor = (2.5 - p) / (2.0 - p)
+    R_max = ( (L_z / (M_disk * np.sqrt(G * M_star))) * factor )**2
+    return R_max
+
+
+
+
 if __name__ == "__main__":
 
-    # Example for snapshot #12
-    plot_shell_angular_momentum(
+    # choose snapshots (e.g., all)
+    snap_idx = np.arange(0, 50, dtype=int)
+
+    # initial conditions
+    J0 = np.zeros(3)         # or your initial disc J
+    M0 = 0.0                 # start empty, or set a value
+
+    # Sigma profile params (Σ0 in g/cm^2, r0 in cm)
+    Sigma0 = 10.0     # example normalization
+    r0     = 100*PC2CM
+    p      = 1.0
+    r_in   = 0.0      # for p>=2 set r_in>0 to avoid divergence
+
+    times_myr, J_hist, M_hist, Rout_hist, theta_deg, Mdot_hist, rcut_hist = evolve_disc_J_M_Rtheta(
         snapshot_dir="snapshots",
-        snapshot_idx=0,
+        snapshot_indices=snap_idx,
+        M_star=1.0*MSUN,
+        J_disc0=J0,
+        M_disc0=M0, p=p,
+        v_ref_mode="first_snapshot_inner", v_ref_path="v_ref.npy",
+        init_snapshot_idx=0, shell_index_for_ref=0,
+        c_s=1e5  # cm/s
+    )
+
+    plot_disc_J_M_Rtheta(
+        times_myr, J_hist, M_hist, Rout_hist, theta_deg,
+        show_components=True, r_units="au", save=None
+    )
+
+    # Example for snapshot #12
+    """plot_shell_angular_momentum(
+        snapshot_dir="snapshots",
+        snapshot_idx=4,
         coords_file="sph_coords_equalarea.npz",
-        x_units="pc",
+        x_units="au",
         logx=True,
         save=None
-    )
+    )"""
 
     plot_bhl_and_shell_velocity(
         snapshot_dir="snapshots",
-        snapshot_idx=0,
+        snapshot_idx=5,
         M_star=1.0,
         mass_units = "Msun",
         v_ref=None,

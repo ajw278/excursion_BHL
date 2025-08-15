@@ -14,12 +14,16 @@ from scipy.special import erfinv
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import healpy as hp
 import time as time_module
+import generate_cloudrho0 as gcr
 
+
+pc2cm = 3.086e18  
+year2s = 3.154e7 
 
 plt.rc('text', usetex=True)
 
 class MultiResolutionArray:
-	def __init__(self, snapshot_dir='snapshots', imaxcoll=None, rmax=200., rspatial=30.0, rmin=0.3, dr=0.8,cells_per_level=100):
+	def __init__(self, snapshot_dir='snapshots', imaxcoll=None, rmax=200., rspatial=30.0, rmin=0.3, dr=0.8,cells_per_level=100, baseline_fn=None):
 		"""
 		Initialize the MultiResolutionArray. If a file with the given filename exists,
 		load the object from the file. Otherwise, initialize the object and save it.
@@ -32,6 +36,8 @@ class MultiResolutionArray:
 			None
 		"""
 		self.cells_per_level = int(cells_per_level)
+
+		self.baseline_fn = baseline_fn
 
 		pc2cm = 3.086e18  # Example constant
 		print("Defining spatial scales...")
@@ -60,6 +66,34 @@ class MultiResolutionArray:
 
 		#self.plot_cell_centers_3d()
 
+	def _get_baseline(self, t_seconds):
+		"""
+		Returns (rho0_t, v0_t, Lcut_t) from the user-supplied baseline_fn, or defaults.
+		- rho0_t: scalar (>0)
+		- v0_t:   np.array shape (3,) velocity offset [same units as your vectors]
+		- Lcut_t: float, cutoff scale [cm]; ignore all perturbation levels with scale > Lcut_t
+		"""
+		if callable(self.baseline_fn):
+			out = self.baseline_fn(t_seconds)
+			rho0_t = float(out.get("rho0", self.grid.rho0))
+			v0_t   = np.asarray(out.get("v0", np.zeros(3, dtype=float)), dtype=float).reshape(3,)
+			Lcut_t = float(out.get("Lcut", np.inf))
+		else:
+			rho0_t = float(self.grid.rho0)
+			v0_t   = np.zeros(3, dtype=float)
+			Lcut_t = np.inf
+		return rho0_t, v0_t, Lcut_t
+	
+	def _active_level_masks(self, Lcut):
+		"""
+		Returns:
+		super_mask   : list[bool] same length as self.super_scales
+		spatial_mask : list[bool] same length as self.spatial_scales
+		True means the level is INCLUDED in the sum.
+		"""
+		super_mask   = [ (s <= Lcut) for s in self.super_scales ] if hasattr(self, "super_scales") else []
+		spatial_mask = [ (s <= Lcut) for s in self.spatial_scales ]
+		return super_mask, spatial_mask
 
 	def generate_unstructured_levels(self):
 		"""
@@ -264,6 +298,7 @@ class MultiResolutionArray:
 		initialized_grid = np.sqrt(2.0 * DS) * erfinv(2.0 * u_delta - 1.0)
 		initialized_grid_v = np.sqrt(2.0 * DSV) * erfinv(2.0 * u_delta_v - 1.0)
 
+
 		return initialized_grid, initialized_grid_v
 
 	
@@ -348,7 +383,7 @@ class MultiResolutionArray:
 			self.t = t
 
 			if t >= next_snapshot_time:
-				print('Saving...')
+				#print('Saving...')
 				self.save_snapshot(snapshot_idx, t)
 				snapshot_times.append(t)
 				np.save(snapshot_times_file, np.array(snapshot_times))  # Update time tracking
@@ -379,8 +414,6 @@ class MultiResolutionArray:
 		t0_total = time_module 
 		t_start_total = time_module.perf_counter()
 
-		import os
-		import numpy as np
 
 		os.makedirs(self.snapshot_dir, exist_ok=True)
 		times_filename = os.path.join(self.snapshot_dir, "snapshot_times.npy")
@@ -441,10 +474,13 @@ class MultiResolutionArray:
 			# Evaluate on equal-area grid
 			t_eval0 = time_module.perf_counter()
 			lnrho_eq, v_eq = self.evaluate_to_equal_area(
-				Nr=Nr, r_min=r_min, r_max=r_max, nside=nside, coords_path=coord_path, return_coords=False
+				Nr=Nr, r_min=r_min, r_max=r_max, nside=nside,
+				coords_path=coord_path, return_coords=False,
+				t_seconds=time  
 			)
 			t_eval1 = time_module.perf_counter()
-			print(f"[save_snapshot] evaluate_to_equal_area: {t_eval1 - t_eval0:.3f}s "
+			if profile:
+				print(f"[save_snapshot] evaluate_to_equal_area: {t_eval1 - t_eval0:.3f}s "
 				f"(lnrho shape={lnrho_eq.shape}, v shape={v_eq.shape})")
 
 			# Save arrays
@@ -633,7 +669,7 @@ class MultiResolutionArray:
 
 		print(theta.shape, phi.shape, r_c.shape, npix)
 
-		fig = plt.figure(figsize=(8, 7))
+		'''fig = plt.figure(figsize=(8, 7))
 		ax = fig.add_subplot(111, projection='3d')
 
 		# unit vectors for each pixel
@@ -647,7 +683,7 @@ class MultiResolutionArray:
 		ax.scatter(ux, uy, uz, s=1.0, alpha=0.5, color='gray', label='HEALPix directions')
 
 	
-		plt.show()
+		plt.show()'''
 
 		# unit vectors for each pixel
 		sin_th = np.sin(theta)
@@ -697,7 +733,8 @@ class MultiResolutionArray:
                            nside=16, coords_path=None,
                            return_coords=False,
                            profile=False,
-                           batch_query=True):
+                           batch_query=True,
+                           t_seconds=None):
 		"""
 		Rasterize unstructured levels onto log-r + HEALPix-angle grid.
 
@@ -707,9 +744,19 @@ class MultiResolutionArray:
 			(optionally) r_c, theta, phi, U
 			(if profile=True) also returns a stats dict as last item
 		"""
+		# -- baseline & active masks --
+		if t_seconds is None:
+			t_seconds = getattr(self, "t", 0.0)
+		
 		time = time_module
 		t_all0 = time.perf_counter()
 		stats = {"notes": "evaluate_to_equal_area timings", "batch_query": bool(batch_query)}
+
+		rho0_t, v0_t, Lcut_t = self._get_baseline(t_seconds)
+		super_mask, spatial_mask = self._active_level_masks(Lcut_t)
+
+		
+
 
 		# ---- Load/build coords ----
 		t0 = time.perf_counter()
@@ -732,13 +779,21 @@ class MultiResolutionArray:
 
 		# ---- Init outputs (+ super-scales) ----
 		t1 = time.perf_counter()
+
 		lnrho_maps = np.zeros((Nr, npix), dtype=np.float64)
 		v_maps     = np.zeros((Nr, npix, 3), dtype=np.float64)
 
-		if hasattr(self, 'super_resolutions'):
-			lnrho_maps += np.sum(self.super_resolutions)
-		if hasattr(self, 'super_resolutions_v'):
-			v_maps += np.sum(self.super_resolutions_v)
+		if hasattr(self, 'super_resolutions') and super_mask:
+			for j, keep in enumerate(super_mask):
+				if keep:
+					s0 = float(np.asarray(self.super_resolutions[j]).reshape(-1)[0])   # scalar
+					lnrho_maps += s0
+					
+		if hasattr(self, 'super_resolutions_v') and super_mask:
+			for j, keep in enumerate(super_mask):
+				if keep:
+					v0 = np.asarray(self.super_resolutions_v[j]).reshape(3,)           # (3,)
+					v_maps     += v0
 		stats["t_init"] = time.perf_counter() - t1
 
 		# ---- Build KD-trees per level ----
@@ -776,7 +831,7 @@ class MultiResolutionArray:
 			t_accum_total = 0.0
 
 			for i, tree in enumerate(trees):
-				if tree is None:
+				if tree is None or not spatial_mask[i]:
 					query_times.append(0.0)
 					accum_times.append(0.0)
 					continue
@@ -812,7 +867,7 @@ class MultiResolutionArray:
 			for ir, r in enumerate(r_c):
 				pts = r * U  # (npix, 3)
 				for i, tree in enumerate(trees):
-					if tree is None:
+					if tree is None or not spatial_mask[i]:
 						continue
 					tqi0 = time.perf_counter()
 					try:
@@ -833,7 +888,10 @@ class MultiResolutionArray:
 			stats["t_query_total"] = sum(query_times)
 			stats["t_accum_total"] = sum(accum_times)
 
-		lnrho_maps += np.log(self.grid.rho0)
+		lnrho_maps += np.log(rho0_t)
+		# add bulk velocity offset everywhere
+		v_maps += v0_t  # broadcast to (Nr, npix, 3)
+
 		# ---- Finish ----
 		stats["t_total"] = time.perf_counter() - t_all0
 
@@ -861,94 +919,6 @@ class MultiResolutionArray:
 			return lnrho_maps, v_maps, stats
 		return lnrho_maps, v_maps
 	
-
-	def evaluate_to_spherical_grid(self,
-								Nr=128, Ntheta=64, Nphi=128,
-								r_min=None, r_max=None,
-								return_coords=False):
-		"""
-		Rasterize unstructured levels onto a spherical grid (r, theta, phi).
-
-		Grid:
-		- r: logarithmically spaced (cell edges geomspace; centers are geometric mean)
-		- theta: [0, pi], uniform in theta
-		- phi: [0, 2pi), uniform
-		Interp:
-		- For each spherical cell center, find nearest unstructured sample at each level
-			and add (scalar and vector) contributions. Super-scale constants added everywhere.
-
-		Args:
-			Nr, Ntheta, Nphi: ints for grid resolution
-			r_min (float|None): inner radius [cm]. If None -> min(dx_i)
-			r_max (float|None): outer radius [cm]. If None -> L_domain
-			return_coords (bool): if True, also return (r_c, theta_c, phi_c)
-
-		Returns:
-			lnrho_sph : (Nr, Ntheta, Nphi) array  (log-density perturbation sum)
-			v_sph     : (Nr, Ntheta, Nphi, 3) array (velocity perturbation sum)
-			(optionally) r_c, theta_c, phi_c (1D arrays of centers)
-		"""
-		# ---- set spherical grid ----
-		if r_max is None:
-			r_max = np.max(self.spatial_scales)  # large but < L_domain
-		if r_min is None:
-			r_min = np.min(self.spatial_scales)  # small but > 0
-
-		if not (r_min > 0 and r_min < r_max):
-			raise ValueError(f"Invalid radii: r_min={r_min}, r_max={r_max}")
-
-		# radial edges (geom), centers as geometric mean of edges
-		r_edges = np.geomspace(r_min, r_max, Nr + 1)
-		r_c = np.sqrt(r_edges[:-1] * r_edges[1:])
-
-		# theta, phi centers
-		dth = np.pi / Ntheta
-		dph = 2.0 * np.pi / Nphi
-		theta_c = np.linspace(0.0, np.pi, Ntheta, endpoint=False) + 0.5 * dth
-		phi_c   = np.linspace(0.0, 2.0*np.pi, Nphi, endpoint=False) + 0.5 * dph
-
-		# mesh of spherical centers
-		R, TH, PH = np.meshgrid(r_c, theta_c, phi_c, indexing='ij')
-		# convert to Cartesian for NN search
-		X = R * np.sin(TH) * np.cos(PH)
-		Y = R * np.sin(TH) * np.sin(PH)
-		Z = R * np.cos(TH)
-		pts = np.column_stack([X.ravel(), Y.ravel(), Z.ravel()])  # (Nr*Nth*Nph, 3)
-
-		# ---- initialize outputs with super-scale constants ----
-		lnrho_sph = np.zeros((Nr, Ntheta, Nphi), dtype=np.float64)
-		v_sph     = np.zeros((Nr, Ntheta, Nphi, 3), dtype=np.float64)
-
-		if hasattr(self, 'super_resolutions'):
-			lnrho_sph += np.sum(self.super_resolutions)
-		if hasattr(self, 'super_resolutions_v'):
-			v_sph += np.sum(self.super_resolutions_v)
-
-		# ---- accumulate nearest-neighbor from each level ----
-		for i in range(len(self.spatial_scales)):
-			pos = self.level_positions[i]   # (Ni, 3)
-			if pos.size == 0:
-				continue
-			tree = cKDTree(pos)
-
-			# Query nearest neighbor for all spherical centers
-			try:
-				_, idx = tree.query(pts, k=1, workers=-1)   # SciPy >=1.6
-			except TypeError:
-				_, idx = tree.query(pts, k=1)               # fallback without workers
-
-			s_vals = self.level_scalar[i][idx]             # (M,)
-			v_vals = self.level_vector[i][idx, :]          # (M,3)
-
-			# Add to grids
-			lnrho_sph += s_vals.reshape(Nr, Ntheta, Nphi)
-			v_sph     += v_vals.reshape(Nr, Ntheta, Nphi, 3)
-		
-
-		if return_coords:
-			return lnrho_sph, v_sph, r_c, theta_c, phi_c
-		return lnrho_sph, v_sph
-
 	def create_equal_area_slice_video(
 			self,
 			snapshot_dir="snapshots",
@@ -996,7 +966,7 @@ class MultiResolutionArray:
 			rho0 = float(self.grid.rho0)
 			log10_rho0 = np.log10(rho0)
 			def to_display(arr_ln):
-				return (log10_rho0 + arr_ln*LOG10E) if log_display else (np.exp(arr_ln, dtype=np.float64))
+				return (arr_ln*LOG10E) if log_display else (np.exp(arr_ln, dtype=np.float64))
 
 			# --------- first frame & color scale ---------
 			first = np.load(files[0])
@@ -1063,224 +1033,28 @@ class MultiResolutionArray:
 
 
 
-	'''def create_spherical_slice_video(self,
-									snapshot_dir="snapshots",
-									file_pattern="snapshot_*_lnrho_sph.npy",
-									coords_file="sph_coords.npz",
-									output_filename="spherical_slice.mp4",
-									slice_type="r",                 # 'r' | 'theta' | 'phi'
-									r_index=None, r_value=None,     # r_value in cm
-									theta_index=None, theta_value_deg=None,
-									phi_index=None, phi_value_deg=None,
-									fps=12,
-									cmap="inferno",
-									log_display=True,               # show log10(density)
-									vmin=None, vmax=None):          # color limits; if None use percentiles from first frame
-		"""
-		Make a movie of the density slice over time from spherical gridded snapshots.
+if __name__ == "__main__":
 
-		Inputs
-		------
-		snapshot_dir : directory containing spherical snapshots
-		file_pattern : glob pattern for the lnrho (or rho) snapshot files
-		coords_file  : npz with arrays r, theta, phi (1D centers)
-					expected keys: 'r', 'theta', 'phi'
-		output_filename : mp4 output
-		slice_type   : 'r', 'theta', or 'phi'
-		r_index / r_value (cm), theta_index / theta_value_deg, phi_index / phi_value_deg:
-			choose the slice either by index or by nearest coordinate value.
-		log_display : if True, imshow(log10(density)); else imshow(density)
-		rho0        : base density (cm^-3 or whatever units) if snapshots store log-density.
-					If snapshots already store physical density, leave rho0=None and set log_display as desired.
-		vmin,vmax   : color scale limits; if None they are set from the first frame percentiles (5–95%).
-		"""
+	#grid = exc.trajectory_grid(rmax=30.0 * pc2cm, rmin=0.2 * pc2cm, drfact=0.5)
 
-		rho0 = float(self.grid.rho0)
-		LOG10E = 1.0 / np.log(10.0)
-		log10_rho0 = np.log10(rho0)
-		# --- files & coords ---
-		files = sorted(glob.glob(os.path.join(snapshot_dir, file_pattern)))
-		if not files:
-			raise FileNotFoundError(f"No files matching {file_pattern} in {snapshot_dir}")
+	R_sfr = 2.0 * pc2cm  # SFR radius in cm
 
-		coords_path = coords_file if not os.path.exists(os.path.join(snapshot_dir, coords_file)) \
-								else os.path.join(snapshot_dir, coords_file)
-		coords = np.load(coords_path)
-		r_c     = coords["r"]        # [cm]
-		theta_c = coords["theta"]    # [rad]
-		phi_c   = coords["phi"]      # [rad]
+	baseline_fn, info = gcr.build_cloud_baseline_fn(
+			target_radius_cm=R_sfr,
+			rmin=0.01*pc2cm,
+			rmax=10.0*h_*pc2cm,
+			drfact=0.95,
+			dt_myr=0.01,
+			tmax_myr=10.0,
+			seed=42
+		)
 
-		Nr, Ntheta, Nphi = np.load(files[0]).shape
+	# Initialize the MultiResolutionArray§
+	mra = MultiResolutionArray(rmax=200.0, rspatial=0.1, rmin=1e-5, dr=0.5, cells_per_level=50, baseline_fn=baseline_fn)
+	# Evolve for 10 Myr, storing snapshots every 1 Myr
+	mra.evolve(Tend=5.0, fraction_of_tau=0.1, dt_snap=0.05)
 
-		# --- choose slice indices ---
-		def nearest_idx(arr, val):
-			return int(np.argmin(np.abs(arr - val)))
+	# Create an MP4 video from the snapshots
+	mra.create_equal_area_slice_video(output_filename="evolution.mp4", fps=10, vmin=-25, vmax=-22.)
 
-		st = slice_type.lower()
-		if st == "r":
-			if r_index is None:
-				r_index = Nr // 2 if r_value is None else nearest_idx(r_c, float(r_value))
-			j_r = int(r_index)
-		elif st == "theta":
-			if theta_index is None:
-				theta_index = Ntheta // 2 if theta_value_deg is None else nearest_idx(theta_c, np.deg2rad(float(theta_value_deg)))
-			j_th = int(theta_index)
-		elif st == "phi":
-			if phi_index is None:
-				phi_index = Nphi // 2 if phi_value_deg is None else nearest_idx(phi_c, np.deg2rad(float(phi_value_deg)))
-			j_ph = int(phi_index)
-		else:
-			raise ValueError("slice_type must be 'r', 'theta', or 'phi'")
-
-		# --- transform helpers (numerically stable) ---
-		def to_display_log10(arr_ln):   # arr_ln = ln(rho_pert)
-			# log10(rho0 * exp(arr_ln)) = log10(rho0) + arr_ln / ln(10)
-			return log10_rho0 + arr_ln * LOG10E
-
-		def to_display(arr_ln):
-			return to_display_log10(arr_ln) if log_display else rho0 * np.exp(arr_ln, dtype=np.float64)
-
-		# --- figure & first frame ---
-		first = np.load(files[0])
-
-		if st == "r":
-			data0 = to_display(first[j_r, :, :])        # (theta, phi)
-			x_min, x_max = np.rad2deg(phi_c[0]), np.rad2deg(phi_c[-1] + (phi_c[1]-phi_c[0]))
-			y_min, y_max = np.rad2deg(theta_c[0]), np.rad2deg(theta_c[-1] + (theta_c[1]-theta_c[0]))
-			xlabel, ylabel = r"$\phi$ [deg]", r"$\theta$ [deg]"
-			aspect = None
-		elif st == "theta":
-			data0 = to_display(first[:, j_th, :])       # (r, phi)
-			x_min, x_max = np.rad2deg(phi_c[0]), np.rad2deg(phi_c[-1] + (phi_c[1]-phi_c[0]))
-			y_min, y_max = r_c[0], r_c[-1] + (r_c[1]-r_c[0])
-			xlabel, ylabel = r"$\phi$ [deg]", r"$r$ [cm]"
-			aspect = 'auto'
-		else:  # 'phi'
-			data0 = to_display(first[:, :, j_ph])       # (r, theta)
-			x_min, x_max = np.rad2deg(theta_c[0]), np.rad2deg(theta_c[-1] + (theta_c[1]-theta_c[0]))
-			y_min, y_max = r_c[0], r_c[-1] + (r_c[1]-r_c[0])
-			xlabel, ylabel = r"$\theta$ [deg]", r"$r$ [cm]"
-			aspect = 'auto'
-
-		# robust color limits from finite data only
-		if vmin is None or vmax is None:
-			finite = np.isfinite(data0)
-			p_lo, p_hi = np.nanpercentile(data0[finite], [5, 95]) if np.any(finite) else (-1, 1)
-			vmin = p_lo if vmin is None else vmin
-			vmax = p_hi if vmax is None else vmax
-
-		fig, ax = plt.subplots(figsize=(7.5, 5.5))
-		im = ax.imshow(data0.T,
-					extent=[x_min, x_max, y_min, y_max],
-					origin="lower",
-					aspect=aspect,
-					cmap=cmap,
-					vmin=vmin, vmax=vmax)
-		cbar_label = r"$\log_{10}\,\rho$" if log_display else r"$\rho$"
-		plt.colorbar(im, ax=ax, label=cbar_label)
-		ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
-		title = ax.set_title("")
-
-		# --- time labels ---
-		times_path = os.path.join(snapshot_dir, "snapshot_times.npy")
-		t_array = np.load(times_path) if os.path.exists(times_path) else None
-		year2s = 3.154e7
-
-		idx_re = re.compile(r"snapshot_(\d+)", re.IGNORECASE)
-
-		def parse_idx(path):
-			m = idx_re.search(os.path.basename(path))
-			return int(m.group(1)) if m else None
-
-		def update(frame_i):
-			f = files[frame_i]
-			arr = np.load(f)
-
-			if st == "r":
-				data = to_display(arr[j_r, :, :])
-			elif st == "theta":
-				data = to_display(arr[:, j_th, :])
-			else:
-				data = to_display(arr[:, :, j_ph])
-
-			im.set_array(data.T)
-
-			# label time
-			snap_i = parse_idx(f)
-			if t_array is not None:
-				if snap_i is not None and 0 <= snap_i < len(t_array):
-					t_myr = t_array[snap_i] / year2s / 1e6
-				elif 0 <= frame_i < len(t_array):
-					t_myr = t_array[frame_i] / year2s / 1e6
-				else:
-					t_myr = None
-			else:
-				t_myr = None
-
-			title.set_text(f"t = {t_myr:.2f} Myr" if t_myr is not None else os.path.basename(f))
-			return [im, title]
-
-		ani = animation.FuncAnimation(fig, update, frames=len(files), blit=False)
-		ani.save(output_filename, writer="ffmpeg", fps=fps)
-		plt.close(fig)
-		print(f"Saved video to {output_filename}")
-			
-
-		# derive snapshot index from filename
-		def snap_idx_from_name(path):
-			base = os.path.basename(path)
-			parts = base.split("_")
-			for p in parts:
-				if p.isdigit() and len(p) >= 3:
-					return int(p)
-			return None
-
-		# load times if available
-		times_path = os.path.join(snapshot_dir, "snapshot_times.npy")
-		t_array = np.load(times_path) if os.path.exists(times_path) else None
-		year2s = 3.154e7
-
-		def update(frame_i):
-			f = files[frame_i]
-			arr = np.load(f)
-
-			if slice_type.lower() == "r":
-				data = to_display(arr[j_r, :, :])
-			elif slice_type.lower() == "theta":
-				data = to_display(arr[:, j_th, :])
-			else:
-				data = to_display(arr[:, :, j_ph])
-
-			im.set_array(data.T)
-
-			# time label if we can match it
-			snap_i = snap_idx_from_name(f)
-			if t_array is not None and snap_i is not None and snap_i < len(t_array):
-				t_myr = t_array[snap_i] / year2s / 1e6
-				title.set_text(f"t = {t_myr:.2f} Myr")
-			else:
-				title.set_text(os.path.basename(f))
-
-			return [im, title]
-
-		ani = animation.FuncAnimation(fig, update, frames=len(files), blit=False)
-		ani.save(output_filename, writer="ffmpeg", fps=fps)
-		plt.close(fig)
-		print(f"Saved video to {output_filename}")'''
-
-
-# Assuming trajectory_spatial_grid is properly defined
-pc2cm = 3.086e18  # Example constant
-year2s = 3.154e7  # Seconds in a year
-#grid = exc.trajectory_grid(rmax=30.0 * pc2cm, rmin=0.2 * pc2cm, drfact=0.5)
-
-
-# Initialize the MultiResolutionArray§
-mra = MultiResolutionArray(rmax=200.0, rspatial=0.1, rmin=1e-5, dr=0.5, cells_per_level=500)
-# Evolve for 10 Myr, storing snapshots every 1 Myr
-mra.evolve(Tend=10.0, fraction_of_tau=0.1, dt_snap=0.1)
-
-# Create an MP4 video from the snapshots
-mra.create_equal_area_slice_video(output_filename="evolution.mp4", fps=10, vmin=-25, vmax=-22.)
-
-			
+				

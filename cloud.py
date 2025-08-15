@@ -3,6 +3,8 @@ import numpy as np
 from consts_defaults import *
 from turbfuncs import *
 import scipy.special as ss
+EPS_T = 1e-12          # seconds; avoids td==0 divisions
+RHO_FLOOR = 1e-80      # cgs; avoids sqrt(0) in t_ff
 
 
 """
@@ -165,40 +167,63 @@ class bound_clump():
 		arg = (mu+ var - np.log(rho0))/(np.sqrt(2.*var))
 		return 0.5*(1.+ss.erf(arg))
 	
-	def calc_drhodt(self, t, rho0):
+	'''def calc_drhodt(self, t, rho0):
 		td = t-self.tform
 		tff0 =self.tff_rho/np.sqrt(rho0)
 		factor1 = rho0*td*12.*self.Q/self.a
 		Qprod = self.Q*rho0*td*td
 		tau = td/tff0
-		return np.absolute(factor1*(1.- Qprod)**(-self.a-1.))
+		return np.absolute(factor1*(1.- Qprod)**(-self.a-1.))'''
+	
+	def calc_drhodt(self, t, rho0):
+		td = t - self.tform
+		if td <= 0.0:
+			return 0.0
+		rho0 = max(float(rho0), RHO_FLOOR)
+		#tff0 = self.tff_rho / np.sqrt(rho0)
+		# original formula
+		factor1 = rho0 * td * 12.0 * self.Q / self.a
+		Qprod   = self.Q * rho0 * td * td
+		return np.abs(factor1 * (1.0 - Qprod) ** (-self.a - 1.0))
+
 		
-		
+	'''
 	def calc_q(self, t, rho0):
 		tff0 = self.tff_rho/np.sqrt(rho0)
 		tau = (t-self.tform)/tff0
 		
 		num = (1.-tau**2)**(self.a+1.)
 		denom = (1.+(self.a-1.)*tau**2)
-		return num/denom
+		return num/denom'''
+		
+	def calc_q(self, t, rho0):
+		rho0 = max(float(rho0), RHO_FLOOR)
+		tff0 = self.tff_rho / np.sqrt(rho0)
+		tau  = (t - self.tform) / max(tff0, EPS_T)
+
+		# Keep it non-negative to avoid sign flips in SFR
+		num   = (1.0 - tau * tau)
+		num   = num ** (self.a + 1.0)
+		denom = 1.0 + (self.a - 1.0) * tau * tau
+		return num / denom
+
 	
 	def calc_rho_acc(self, t):
 		td = t - self.tform
 		sq = (2.*self.Q*self.rho_accr*td*td +1.)/(2.*self.Q*self.Q*self.rho_accr*td**4)
-		rho_i = sq + np.sqrt(sq**2 - 1./(self.Q**2 * t**4))
+		rho_i = sq + np.sqrt(max(sq**2 - 1./(self.Q**2 * (t+1e-10)**4),0.0))
 		return rho_i
-	
-    
+
 	def calc_SFR(self,t, M=None, rho=None, update=True, var_lrho=None):
 		if M is None:
 			M=self.M
 		
 		if M>0.0:
-			rho0 = np.exp(self.lnrho_med0)
+			#rho0 = np.exp(self.lnrho_med0)
 			
 			rhoacc =self.calc_rho_acc(t)
-			rhosp = np.logspace(rho0-100.0, rho0+10.0,1000)
-			PM = self.Prho0_M(rhosp)
+			#rhosp = np.logspace(rho0-100.0, rho0+10.0,1000)
+			#PM = self.Prho0_M(rhosp)
 			drhodt = self.calc_drhodt(t, rhoacc)
 			q= self.calc_q(t, rhoacc)
 			dMdrho = self.Prho0_M(rhoacc)*q
@@ -303,9 +328,6 @@ class bound_clump():
 			self.M = 0.0
 		if self.R<self.Rmin:
 			self.R = self.Rmin
-
-		
-	
 	
 
 	def SF_step(self, tnew):
