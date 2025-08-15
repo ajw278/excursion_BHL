@@ -458,6 +458,8 @@ def plot_imf_with_models(
 
     ax.set_xlim(log_lo, log_hi)
     ax.set_xlabel(r'$\log_{10}(M_\star/M_\odot)$')
+    #ax.set_yscale('log')  # log scale for density
+    #ax.set_ylim([1e-2,])  # log scale for density
     ax.set_ylabel(r'Probability density per dex')  # per unit log10 M
     ax.grid(True, ls=':', alpha=0.4)
     ax.legend(loc='best')
@@ -497,8 +499,8 @@ if __name__ == "__main__":
          base_seed=12345,
          dt_factor=0.1,
          max_tries=100000,
-         overwrite=True,            # set True to resample and overwrite cache
+         overwrite=False,            # set True to resample and overwrite cache
          verbose_every=25
     )
     print(f"Loaded/sampled {len(masses_msun)} stars; meta={meta}")
-    plot_imf_with_models(masses_msun, nbins=25, save="imf_comparison.png", show=True)
+    plot_imf_with_models(masses_msun, nbins=15, save="imf_comparison.png", show=True, mmin_cut=0.1)
