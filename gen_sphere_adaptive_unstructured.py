@@ -11,10 +11,11 @@ import os, glob, re
 import matplotlib.animation as animation
 from scipy.spatial import cKDTree
 from scipy.special import erfinv
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+from mpl_toolkits.mplot3d import Axes3D  
 import healpy as hp
 import time as time_module
 import generate_cloudrho0 as gcr
+import warnings
 
 
 pc2cm = 3.086e18  
@@ -23,7 +24,7 @@ year2s = 3.154e7
 plt.rc('text', usetex=True)
 
 class MultiResolutionArray:
-	def __init__(self, snapshot_dir='snapshots', imaxcoll=None, rmax=200., rspatial=30.0, rmin=0.3, dr=0.8,cells_per_level=100, baseline_fn=None):
+	def __init__(self, snapshot_dir='snapshots', imaxcoll=None, rmax=200., rspatial=30.0, rmin=0.3, dr=0.8,cells_per_level=100, baseline_fn=None, grid=None):
 		"""
 		Initialize the MultiResolutionArray. If a file with the given filename exists,
 		load the object from the file. Otherwise, initialize the object and save it.
@@ -41,10 +42,17 @@ class MultiResolutionArray:
 
 		pc2cm = 3.086e18  # Example constant
 		print("Defining spatial scales...")
+		if not grid is None:
+			rmax = grid.rlevels[0] / pc2cm  # Convert to pc
+			rmin = grid.rlevels[-1] / pc2cm
 		self.define_spatial_scales(rmax*pc2cm, rspatial*pc2cm, rmin*pc2cm, dr, cells_per_level)
 
 		print("Initializing trajectory grid...")
-		self.grid = exc.trajectory_grid(self.scales)
+		if grid is None:
+			self.grid = exc.trajectory_grid(self.scales)
+		else:
+			self.grid = grid
+
 
 		print("Generating spatial grid...")
 		self.generate_unstructured_levels()
@@ -65,6 +73,187 @@ class MultiResolutionArray:
 		os.makedirs(self.snapshot_dir, exist_ok=True)
 
 		#self.plot_cell_centers_3d()
+
+	def set_deltas(self, positions, scales, Ddeltas, kind="scalar", profile=False):
+		"""
+		Convenience: arrays in, builds overrides list and calls apply_delta_overrides.
+		positions: (N,3), scales: (N,), deltas: (N,) for scalar or (N,3) for vector.
+		"""
+		positions = np.asarray(positions)
+		scales = np.asarray(scales).reshape(-1)
+		Ddeltas = np.asarray(Ddeltas)
+		N = positions.shape[0]
+		if scales.size != N:
+			raise ValueError("scales must have same length as positions")
+		if kind == "scalar":
+			if Ddeltas.shape != (N,):
+				raise ValueError("scalar deltas must have shape (N,)")
+		else:
+			if Ddeltas.shape != (N, 3):
+				raise ValueError("vector deltas must have shape (N,3)")
+
+		overrides = [{"pos": positions[i], "scale": float(scales[i]), "Ddelta": Ddeltas[i], "kind": kind}
+					for i in range(N)]
+		self.apply_delta_overrides(overrides, default_kind=kind, profile=profile)
+
+
+	def _classify_scale(self, s):
+		"""
+		Return ('super', j) or ('spatial', i) and the *closest* level index by scale.
+		'super' iff s > max(self.spatial_scales), else 'spatial'.
+		"""
+		s = float(s)
+		if s > float(np.max(self.spatial_scales)):
+			j = int(np.argmin(np.abs(np.asarray(self.super_scales, dtype=float) - s)))
+			return 'super', j
+		else:
+			i = int(np.argmin(np.abs(np.asarray(self.spatial_scales, dtype=float) - s)))
+			return 'spatial', i
+
+	def apply_delta_overrides(self, overrides, default_kind="scalar", profile=False):
+		"""
+		Apply user-provided overrides after initialization.
+
+		overrides: iterable of dicts with keys:
+		- pos   : (3,) array-like in cm
+		- scale : float in cm
+		- delta : float (scalar) or (3,) array-like (vector)    # also accepts 'Ddelta'
+		- kind  : 'scalar' | 'vector' (optional; default = default_kind)
+
+		Rules:
+		- SUPER levels (0D):
+			* choose closest super-scale by |super_scales - scale|
+			* apply only if ||pos|| <= 2 * super_scale; else ignore and warn
+			* if multiple overrides hit the same super level, **sum** their contributions
+		- SPATIAL levels:
+			* choose closest spatial level by | spatial_scales[i] ] - scale |
+			* pick the nearest cell center to 'pos'
+			* apply only if nearest distance <= 2 * scale; else ignore and warn
+			* **overwrite** the chosen cell's value with the provided delta
+		"""
+		t0 = time_module.perf_counter()
+
+		# --- sanity ---
+		if not hasattr(self, "level_positions"):
+			raise RuntimeError("Unstructured levels not built. Call generate_unstructured_levels() first.")
+		if not hasattr(self, "super_resolutions"):
+			raise RuntimeError("Super levels not initialized.")
+		if not hasattr(self, "n_res"):
+			raise RuntimeError("Missing n_res (cells-per-level) for spatial scale selection.")
+
+		# Helper: pick closest super/spatial index under the new metric
+		def _closest_super_index(s):
+			s = float(s)
+			return int(np.argmin(np.abs(np.asarray(self.super_scales, dtype=float) - s)))
+
+		def _closest_spatial_index(s):
+			s = float(s)
+			# selection metric: | spatial_scales[i] - s |
+			metrics = np.abs(np.asarray(self.spatial_scales, dtype=float) - s)
+			return int(np.argmin(metrics))
+
+		# KD-trees for spatial levels
+		trees = []
+		for pos in self.level_positions:
+			if pos is not None and pos.size:
+				try:
+					trees.append(cKDTree(pos))
+				except Exception:
+					trees.append(None)
+			else:
+				trees.append(None)
+
+		# Normalize overrides
+		norm = []
+		for k, ov in enumerate(overrides):
+			pos   = np.asarray(ov["pos"], dtype=float).reshape(3,)
+			scale = float(ov["scale"])
+			# accept both 'delta' and legacy 'Ddelta'
+			if "delta" in ov:
+				delta = ov["delta"]
+			elif "Ddelta" in ov:
+				delta = ov["Ddelta"]
+			else:
+				raise KeyError(f"Override {k} missing 'delta' (or 'Ddelta').")
+			kind  = ov.get("kind", default_kind)
+			if kind not in ("scalar", "vector"):
+				raise ValueError(f"Override {k}: kind must be 'scalar' or 'vector', got {kind!r}")
+			norm.append((pos, scale, delta, kind))
+
+		applied = 0
+		ignored = 0
+
+		# --- SUPER: collect and sum per level, with distance gating ---
+		super_accum_scalar = {}  # j -> float sum
+		super_accum_vector = {}  # j -> (3,) sum
+
+		for pos, scale, delta, kind in norm:
+			# classify by comparing to max spatial scale
+			if scale > float(np.max(self.spatial_scales)):
+				j = _closest_super_index(scale)
+				super_scale = float(self.super_scales[j])
+				rpos = float(np.linalg.norm(pos))
+				if rpos > 2.0 * super_scale:
+					warnings.warn(
+						f"Super override ignored: |pos| = {rpos:.3e} cm > 2*super_scale = {2.0*super_scale:.3e} cm.",
+						RuntimeWarning
+					)
+					ignored += 1
+					continue
+				if kind == "scalar":
+					super_accum_scalar[j] = super_accum_scalar.get(j, 0.0) + float(delta)
+				else:
+					vec = np.asarray(delta, dtype=float).reshape(3,)
+					super_accum_vector[j] = super_accum_vector.get(j, np.zeros(3, dtype=float)) + vec
+
+		# apply super sums
+		for j, val in super_accum_scalar.items():
+			self.super_resolutions[j].reshape(-1)[0] += float(val)
+			applied += 1
+		for j, vec in super_accum_vector.items():
+			self.super_resolutions_v[j].reshape(-1, 3)[0, :] += np.asarray(vec, dtype=float).reshape(3,)
+			applied += 1
+
+		# --- SPATIAL: choose level by |spatial_scale/n_res - scale|, nearest cell, overwrite if within 2*scale ---
+		for pos, scale, delta, kind in norm:
+			if scale > float(np.max(self.spatial_scales)):
+				continue  # already handled as super
+			i = _closest_spatial_index(scale)
+			tree = trees[i]
+			if tree is None:
+				warnings.warn(f"No points at spatial level {i}; override ignored.", RuntimeWarning)
+				ignored += 1
+				continue
+			# nearest neighbor
+			try:
+				dist, ii = tree.query(pos, k=1, workers=-1)
+			except TypeError:
+				dist, ii = tree.query(pos, k=1)
+
+			if not np.isfinite(dist) or (dist > 2.0 * float(scale)):
+				warnings.warn(
+					f"Spatial override ignored at level {i}: nearest distance {dist:.3e} cm > 2*scale = {2.0*float(scale):.3e} cm.",
+					RuntimeWarning
+				)
+				ignored += 1
+				continue
+
+			if kind == "scalar":
+				self.level_scalar[i][ii] = float(delta)   # overwrite
+			else:
+				self.level_vector[i][ii, :] = np.asarray(delta, dtype=float).reshape(3,)  # overwrite
+			applied += 1
+
+		if profile:
+			t1 = time_module.perf_counter()
+			print(f"[apply_delta_overrides] applied={applied}, ignored={ignored}, dt={t1 - t0:.3f}s")
+
+		# small log
+		log_entry = {"applied": applied, "ignored": ignored, "timestamp": time_module.time()}
+		if not hasattr(self, "_override_log"):
+			self._override_log = []
+		self._override_log.append(log_entry)
+
 
 	def _get_baseline(self, t_seconds):
 		"""
@@ -111,7 +300,6 @@ class MultiResolutionArray:
 
 		for i, dx in enumerate(self.spatial_scales):
 			N = self.n_res[i]
-			print(N, dx)
 			R = dx * (N**(1.0/3.0))  # because N*<V_cell> = 4/3 π R^3 → R = dx * N^(1/3)
 
 			pos = self._sample_points_in_sphere(N, R)
@@ -149,39 +337,6 @@ class MultiResolutionArray:
 		z = r * cos_theta
 		return np.stack([x, y, z], axis=-1)  # (N,3)
 	
-	"""def define_spatial_scales(self, rmax, rspatial, rmin, dr, n0):
-		# Define scales from rmax to rspatial reducing by dr
-		scales = [rmax]
-		super_scales = [rmax]
-		ir =0
-		while scales[-1] * dr > rspatial:
-			scales.append(scales[-1] * dr)
-			super_scales.append(scales[-1])
-			ir+=1 
-		scales.append(rspatial)  # Ensure rspatial is included
-		self.super_scales = super_scales
-
-		# Define n_res at rspatial
-		n_res = [n0]
-
-		# Generate spatial scales based on n_res
-		rscale = rspatial
-		self.spatial_scales = [rspatial/float(n0)]
-		self.spatial_level = [ir]
-		while rscale > rmin:
-			next_n_res = max(int(n_res[-1] / dr), n_res[-1] + 1)  # Enforce rule
-			n_res.append(next_n_res)
-			rscale = rspatial *float(n0) / float(next_n_res)  # Compute next spatial scale
-			scales.append(rscale)
-			self.spatial_scales.append(rscale)
-			ir+=1
-			self.spatial_level.append(ir)
-
-		self.scales = np.array(scales)
-		self.spatial_scales = np.array(self.spatial_scales)
-		self.n_res = n_res
-
-		return self.scales"""
 
 	def define_spatial_scales(self, rmax, rspatial, rmin, dr, n0):
 
@@ -241,8 +396,6 @@ class MultiResolutionArray:
 			R = dx * (N**(1.0/3.0))  # because N*<V_cell> = 4/3 π R^3 → R = dx * N^(1/3)
 
 			pos = self._sample_points_in_sphere(N, R)
-
-			print(pos)
 
 			# OU field parameters at turbulence level index spatial_level[i]
 			ilev = self.spatial_level[i]
@@ -358,8 +511,6 @@ class MultiResolutionArray:
 		Tend_sec = Tend * 1e6 * year2s
 		dt_snap_sec = dt_snap * 1e6 * year2s
 		dt = fraction_of_tau * np.min(self.grid.tau_R)
-
-		print(Tend_sec/year2s/1e6, "MYR", dt_snap_sec/year2s/1e6, "Myr", dt/year2s/1e6, "MYR per step")
 
 		# Check if we already have snapshots up to Tend
 		snapshot_times_file = os.path.join(self.snapshot_dir, "snapshot_times.npy")
@@ -587,7 +738,6 @@ class MultiResolutionArray:
 					continue
 
 				Ni = pos.shape[0]
-				print(Ni)
 				if max_points_per_level is not None and Ni > max_points_per_level:
 					idx = rng.choice(Ni, size=max_points_per_level, replace=False)
 					pts = pos[idx]
@@ -666,8 +816,6 @@ class MultiResolutionArray:
 		# HEALPix directions (fixed for all r)
 		npix = hp.nside2npix(nside)
 		theta, phi = hp.pix2ang(nside, np.arange(npix))  # (npix,), (npix,)
-
-		print(theta.shape, phi.shape, r_c.shape, npix)
 
 		'''fig = plt.figure(figsize=(8, 7))
 		ax = fig.add_subplot(111, projection='3d')
@@ -787,7 +935,7 @@ class MultiResolutionArray:
 			for j, keep in enumerate(super_mask):
 				if keep:
 					s0 = float(np.asarray(self.super_resolutions[j]).reshape(-1)[0])   # scalar
-					lnrho_maps += s0
+					lnrho_maps += s0   # add baseline
 					
 		if hasattr(self, 'super_resolutions_v') and super_mask:
 			for j, keep in enumerate(super_mask):
@@ -846,6 +994,7 @@ class MultiResolutionArray:
 
 				tai0 = time.perf_counter()
 				# Gather and reshape
+				print(f"Scale: {self.spatial_scales[i]/pc2cm:.3f} pc")
 				s_vals = self.level_scalar[i][idx].reshape(Nr, npix)
 				v_vals = self.level_vector[i][idx, :].reshape(Nr, npix, 3)
 				lnrho_maps += s_vals
@@ -888,7 +1037,16 @@ class MultiResolutionArray:
 			stats["t_query_total"] = sum(query_times)
 			stats["t_accum_total"] = sum(accum_times)
 
-		lnrho_maps += np.log(rho0_t)
+
+		lnrho_maps += self.grid.mu_lnrho[-1]
+		lnrho_maps += np.log(rho0_t) 
+
+		print(rho0_t, np.log(rho0_t), self.grid.mu_lnrho[-1])
+		plt.figure(figsize=(8, 6))
+		plt.hist(np.log10(np.exp(lnrho_maps.flatten())), bins=100, density=True, alpha=0.7, label='lnrho')
+		#plt.xscale('log')
+		plt.show()
+		
 		# add bulk velocity offset everywhere
 		v_maps += v0_t  # broadcast to (Nr, npix, 3)
 
@@ -1030,6 +1188,8 @@ class MultiResolutionArray:
 			ani.save(output_filename, writer="ffmpeg", fps=fps)
 			plt.close(fig)
 			print(f"Saved video to {output_filename}")
+
+
 
 
 

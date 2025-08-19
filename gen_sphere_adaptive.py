@@ -591,7 +591,7 @@ class MultiResolutionArray:
 		
 		lnrho_norm, v =  self.evaluate_at_finest()
 		# Compute finest density
-		volume_density = self.grid.rho0*np.exp(lnrho_norm)
+		volume_density = self.grid.rho0*np.exp(lnrho_norm + self.grid.mu_lnrho)
 
 		# Save updated density
 		np.save(density_filename, volume_density)
@@ -761,7 +761,7 @@ class MultiResolutionArray:
 			density_filename = os.path.join(self.snapshot_dir, f"snapshot_{snapshot_idx:04d}_density.npy")
 			
 			# Load density
-			volume_density = self.grid.rho0*np.exp(np.load(density_filename))
+			volume_density = self.grid.rho0*np.exp(np.load(density_filename) + self.grid.mu_lnrho)
 
 	
 	def compute_surface_density(self, volume_density):

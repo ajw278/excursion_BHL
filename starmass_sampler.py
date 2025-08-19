@@ -4,6 +4,7 @@ import excursion as exc
 import cloud as cl
 from consts_defaults import pc2cm, Msol2g
 import generate_cloudrho0 as gcr
+import gen_sphere_adaptive_unstructured as gsau
 import os 
 import matplotlib.pyplot as plt
 
@@ -46,25 +47,28 @@ def find_largest_upcrossing(traj, grid, rho_star, R0_cm):
     Returns crossing info at the largest scale (first from large->small) or None if no hit.
     """
     r       = np.asarray(grid.rlevels,   dtype=float)
-    mu_lnr  = np.asarray(grid.mu_lnrho,  dtype=float)        # μ_lnρ(R)
+    delta   = np.asarray(traj.delta,      dtype=float)  # δ(R)
+    rho     = grid.rho0*np.exp(delta + grid.mu_lnrho)  # ρ(R) = ρ0 * exp(δ + μ_lnρ)
     i0      = pick_i_for_radius(grid, R0_cm)
-    rho_g   = make_rglobal_func(grid)(r)                     # ρ_global(R)
-    delta_e = effective_delta(traj.delta, i0)                # δ_eff with large scales removed
 
-    # Barrier: δ_th(R) = ln(ρ*/ρ_global(R)) - μ_lnρ(R)
-    with np.errstate(divide='ignore'):
-        delta_th = np.log(np.clip(rho_star / rho_g, 1e-300, np.inf)) - mu_lnr
 
     #print(f"R0 = {R0_cm/pc2cm:.3f} pc, i0 = {i0}, rho_star = {rho_star:.3e} g/cm^3, rho_g = {rho_g[i0]:.3e} g/cm^3")
 
     # First upcrossing from large->small scales
     for i in range(i0, len(r)):
         #print(f"Checking i={i}, R={r[i]/pc2cm:.3f} pc, delta_e={delta_e[i]:.3f}, delta_th={delta_th[i]:.3f}")  # Debug output
-        if delta_e[i] >= delta_th[i]:
+        if rho[i] >= rho_star:
             R_cross   = float(r[i])
-            rho_pre   = float(rho_g[i] * np.exp(mu_lnr[i] + delta_e[i]))  # realized pre-collapse region density
-            return dict(index=i, i0=i0, R_cross=R_cross, rho_pre_cross=rho_pre,
-                        delta_eff_at_cross=float(delta_e[i]), delta_thresh=float(delta_th[i]))
+            """plt.scatter(r/pc2cm, rho, marker='o', s=1, label='$\\rho(R)$')
+            plt.axhline(rho_star, color='red', ls='--', label='$\\rho^*(t^*)$')
+            plt.xscale('log')
+            plt.yscale('log')
+            plt.xlabel("$R$ [pc]")
+            plt.ylabel("$\\rho$ [g cm$^{-3}$]")
+            plt.show()"""
+
+            return dict(index=i, i0=i0, R_cross=R_cross, rho_pre_cross=rho_star,
+                        delta_eff_at_cross=float(delta[i]))
     return None
 
 # ---------- repeat-draw until upcrossing, then estimate M_* ----------
@@ -73,6 +77,7 @@ def draw_trajectory_until_upcrossing(grid, cloud, t_star_seconds, R0_cm,
                                      dt_factor=0.1, max_tries=3000, seed=None, progress=False):
     rho_star = rho_star_from_time(cloud, t_star_seconds)   # collapsed-threshold density (pre-collapse) at t*
 
+    print(f"Required density: {rho_star:.3e} g/cm^3 at t*={t_star_seconds:.3f} s")
     rng = np.random.default_rng(seed)
 
     # Precompute for speed
@@ -123,6 +128,33 @@ def star_mass_from_hit(cloud, hit, use_exponential_profile=True):
     Convert a successful upcrossing to gas mass and stellar mass.
     ρ_pre at R_cross is a *region* density (pre-collapse); we map it to mass, then ε_core.
     """
+
+    Rcloud_max = float(np.amax(np.asarray(cloud.Rclouds))) / pc2cm  # max spatial scale in pc
+    print("Rcloud_max (pc):", Rcloud_max)
+    
+    mra, info = init_mra_from_hit_trajectory(
+    hit,
+    baseline_fn=None,
+    mra_kwargs=None,
+    cells_per_level=100,
+    dr=0.5,
+    profile=True,
+    maxspatial_pc=Rcloud_max
+    )
+    
+    plot_polar_equatorial_slice_from_mra(
+    mra,
+    hit,
+    Nr=128,
+    nside=32,
+    theta_tol_deg=5.0,
+    vmin=None, vmax=None,
+    coords_path=None,
+    log_scale="log10",        # 'log10' | 'ln' | 'linear' (for colorbar units)
+    Nphi_bins=180,
+    cmap="inferno"
+    )  
+
     R = hit["R_cross"]
     rho_pre = hit["rho_pre_cross"]
 
@@ -137,6 +169,125 @@ def star_mass_from_hit(cloud, hit, use_exponential_profile=True):
 
     hit.update({"M_gas": M_gas, "M_star_g": M_star_g, "M_star_Msun": M_star_Msun})
     return hit
+
+
+def init_mra_from_hit_trajectory(
+    hit,
+    baseline_fn=None,
+    mra_kwargs=None,
+    cells_per_level=100,
+    dr=0.8,
+    profile=True,
+    maxspatial_pc=100.0,
+    #usegrid=False,
+):
+    """
+    Initialize a MultiResolutionArray and seed scalar density deltas from a successful
+    excursion 'hit' (as returned by draw_trajectory_until_upcrossing).
+
+    Parameters
+    ----------
+    hit : dict
+        Output of draw_trajectory_until_upcrossing(...). Must contain:
+          - 'traj': the excursion trajectory object with attributes:
+                * delta : array-like, shape (Nr_grid,)
+                * grid  : the trajectory grid with attributes:
+                      - rlevels : array-like (cm), the scales used in the trajectory
+        (We do NOT require grid/cloud/time here yet; just the 1D trajectory & scales.)
+    baseline_fn : callable or None
+        Optional baseline function for MultiResolutionArray (rho0, v0, Lcut). If None,
+        MRA falls back to its internal defaults (rho0 from trajectory_grid, zero bulk v).
+    mra_kwargs : dict or None
+        Extra keyword args for MultiResolutionArray(...) such as snapshot_dir, imaxcoll, etc.
+        If None, we infer sensible defaults from the trajectory grid scales.
+    cells_per_level : int
+        Number of unstructured cells per spatial level.
+    profile : bool
+        Print a brief apply/report summary.
+
+    Returns
+    -------
+    mra : MultiResolutionArray
+        Fully initialized and seeded with scalar deltas from the hit trajectory.
+    info : dict
+        Small report with counts and scale summaries.
+    """
+    # --- Pull trajectory + scales from the hit dict ---
+    if "traj" not in hit:
+        raise ValueError("hit dict must contain 'traj'.")
+    traj = hit["traj"]
+
+    # Trajectory must expose delta array and its grid with rlevels (in cm)
+    if not hasattr(traj, "delta"):
+        raise ValueError("hit['traj'] must have attribute 'delta'.")
+    if not hasattr(traj, "grid") or not hasattr(traj.grid, "rlevels"):
+        raise ValueError("hit['traj'] must have 'grid' with 'rlevels' (cm).")
+
+    grid = traj.grid
+    rlevels_cm = np.asarray(grid.rlevels, dtype=float)
+    Ddeltas_1d  = np.asarray(traj.Ddelta, dtype=float)
+
+    if rlevels_cm.shape[0] != Ddeltas_1d.shape[0]:
+        raise ValueError("Length mismatch: traj.grid.rlevels vs traj.delta.")
+
+    # --- Choose MRA scale extents from the trajectory grid ---
+    # Convert to pc for MRA API (its __init__ multiplies by pc2cm internally)
+    rmin_pc     = max(1e-6, float(np.min(rlevels_cm)) / pc2cm)     # avoid zero
+
+    rspatial_pc = min(hit['R_cross'] * 100.0, maxspatial_pc)  # max 100x R_cross or user-specified
+    #rmin_pc = hit['R_cross'] /10.0
+
+    rho_cross = hit['rho_pre_cross']  # pre-collapse density at R_cross
+
+    print(f"R_cross = {hit['R_cross']/pc2cm:.3f} pc, rho_pre_cross = {rho_cross:.3e} g/cm^3")
+    
+    # Allow some headroom above rspatial as "super" region
+    
+
+    # Assemble kwargs for MultiResolutionArray
+    mra_kwargs = dict(mra_kwargs or {})
+    mra_kwargs.setdefault("grid", grid)  # no snapshots by default
+    mra_kwargs.setdefault("rspatial", rspatial_pc)
+    mra_kwargs.setdefault("cells_per_level", int(cells_per_level))
+    mra_kwargs.setdefault("baseline_fn", baseline_fn)
+
+    # --- Build the MRA (this creates unstructured levels & super levels) ---
+    mra = gsau.MultiResolutionArray(**mra_kwargs)
+
+    # --- Build scalar overrides from the 1D trajectory ---
+    # Place all seeds at the origin (centered star/high-res element); classification
+    # (spatial vs super) is handled by MRA's scale matcher.
+    N = rlevels_cm.size
+    origins = np.zeros((N, 3), dtype=float)
+    scales  = rlevels_cm.copy()
+    Ddeltas  = Ddeltas_1d.copy()
+
+    # We assume you've added the convenience wrapper `set_deltas` and the underlying
+    # `apply_delta_overrides` per our earlier patch.
+    if not hasattr(mra, "apply_delta_overrides"):
+        raise RuntimeError("MultiResolutionArray missing 'apply_delta_overrides'. "
+                           "Please add the override API we discussed earlier.")
+
+    overrides = [
+        {"pos": origins[i], "scale": float(scales[i]), "Ddelta": float(Ddeltas[i]), "kind": "scalar"}
+        for i in range(N)
+    ]
+
+    print(f"Applying {len(overrides)} Ddelta overrides to MRA (scales in pc):")
+    for i, ov in enumerate(overrides):
+        print(f"  {i:3d}: pos={ov['pos']}, scale={ov['scale']/pc2cm:.3f} pc, Ddelta={ov['Ddelta']:.3f}")
+    
+    mra.apply_delta_overrides(overrides, default_kind="scalar", profile=profile)
+
+    # Prepare a small summary
+    info = {
+        "num_traj_levels": int(N),
+        "rspatial_pc": float(rspatial_pc)
+    }
+    print(info)
+
+    return mra, info
+
 
 
 
@@ -479,6 +630,162 @@ def plot_imf_with_models(
     if show:
         plt.show()
     return fig
+
+import numpy as np
+import matplotlib.pyplot as plt
+import healpy as hp
+
+def _centers_to_edges_geom(r_c):
+    """Recover geometric bin edges from geometric centers."""
+    r_c = np.asarray(r_c, dtype=float)
+    if r_c.size == 1:
+        f = 10.0**0.5
+        return np.array([r_c[0]/f, r_c[0]*f], dtype=float)
+    edges = np.empty(r_c.size + 1, dtype=float)
+    edges[1:-1] = np.sqrt(r_c[:-1] * r_c[1:])   # geometric midpoints
+    edges[0]    = r_c[0]**2 / edges[1]
+    edges[-1]   = r_c[-1]**2 / edges[-2]
+    return edges
+
+def plot_polar_equatorial_slice_from_mra(
+    mra,
+    hit,
+    Nr=128,
+    nside=32,
+    theta_tol_deg=5.0,
+    coords_path=None,
+    log_scale="log10",        # 'log10' | 'ln' | 'linear' (for colorbar units)
+    Nphi_bins=360,
+    vmin=-25.0,
+    vmax=-19.0,
+    cmap="inferno",
+    title=None,
+    ax=None,
+    show=True,
+):
+    """
+    Evaluate ln(rho) on a log-r + HEALPix grid and plot an *equatorial* (theta ≈ π/2)
+    polar pcolormesh with log radial axis. Overplots a circle at hit['R_cross'].
+
+    Parameters
+    ----------
+    mra : MultiResolutionArray
+    hit : dict, must contain 'R_cross' in cm
+    Nr : int, radial shells
+    nside : int, HEALPix nside
+    theta_tol_deg : float, half-thickness of equatorial band
+    coords_path : str or None, reuse coords file if available
+    log_scale : str, colorbar quantity ('log10' of rho, 'ln' of rho, or linear rho)
+    Nphi_bins : int, number of azimuth bins around 0..2π
+    vmin, vmax : float or None, color limits in chosen log_scale
+    cmap : str, matplotlib colormap name
+    title : str or None
+    ax : matplotlib polar axes or None
+    show : bool, call plt.show()
+
+    Returns
+    -------
+    fig, ax, out
+       out is dict with keys: {'r_edges', 'phi_edges', 'Z', 'units'}
+    """
+    plt.figure(figsize=(8, 6))
+    plt.plot(hit['traj'].grid.rlevels/pc2cm, hit['traj'].grid.rho0*np.exp(hit['traj'].delta+hit['traj'].grid.mu_lnrho), marker='o', ls='None')
+    plt.yscale('log')
+    plt.xscale('log')
+    plt.xlabel("R (cm)")
+    plt.ylabel("$\\rho$")
+
+    # 1) Evaluate on equal-area spherical grid
+    lnrho, _v = None, None
+    lnrho, _v, r_c, theta, phi, U = mra.evaluate_to_equal_area(
+        Nr=Nr, nside=nside, coords_path=coords_path, return_coords=True
+    )  # lnrho shape: (Nr, npix)
+
+    plt.figure(figsize=(8, 6))
+    plt.hist(np.log10(r_c), bins=50, histtype='step', label='r_c (pc)')
+    plt.show()
+
+    print('R_c:', np.unique(r_c/pc2cm))
+
+    # 2) Select equatorial band
+    theta = np.asarray(theta)
+    phi   = np.asarray(phi)
+    eq_mask = np.abs(theta - 0.5*np.pi) <= np.deg2rad(theta_tol_deg)
+    if not np.any(eq_mask):
+        raise RuntimeError("No HEALPix pixels fell within the equatorial tolerance; "
+                           "try increasing theta_tol_deg or nside.")
+
+    # 3) Bin by azimuth (phi) for each radius shell
+    phi_sel = phi[eq_mask]
+    # Ensure [0, 2π)
+    phi_sel = np.mod(phi_sel, 2.0*np.pi)
+    phi_edges = np.linspace(0.0, 2.0*np.pi, Nphi_bins + 1)
+    phi_bin_idx = np.digitize(phi_sel, phi_edges) - 1
+    phi_bin_idx = np.clip(phi_bin_idx, 0, Nphi_bins-1)
+
+    Z = np.full((Nr, Nphi_bins), np.nan, dtype=float)  # will store chosen display quantity
+    for ir in range(Nr):
+        vals = lnrho[ir, eq_mask]  # ln rho at this radius for equatorial band
+        # aggregate by bin (mean)
+        for b in range(Nphi_bins):
+            m = (phi_bin_idx == b)
+            if np.any(m):
+                mu = np.nanmean(vals[m])
+                Z[ir, b] = mu
+
+    # 4) Choose display units
+    if log_scale == "log10":
+        units = "$\log \\rho$ [g cm$^{-3}$]"
+        Z_disp = Z / np.log(10.0)  # ln→log10
+    elif log_scale == "ln":
+        units = "$\ln \\rho$ [g cm$^{-3}$]"
+        Z_disp = Z
+    elif log_scale == "linear":
+        units = "$\\rho$ [g cm$^{-3}$]"
+        Z_disp = np.exp(Z, dtype=float)
+    else:
+        raise ValueError("log_scale must be 'log10', 'ln', or 'linear'.")
+
+    # 5) Build r-edges for pcolormesh and set up polar axes
+    r_edges = _centers_to_edges_geom(r_c)
+    if ax is None:
+        fig = plt.figure(figsize=(8, 7))
+        ax = plt.subplot(111, projection="polar")
+    else:
+        fig = ax.figure
+
+    # Polar mesh wants (len(r_edges)-1, len(phi_edges)-1)
+    print('r_edges:', r_edges/pc2cm)
+
+    PHI, R = np.meshgrid(phi_edges, r_edges)
+    pc = ax.pcolormesh(PHI, R/pc2cm, Z_disp, shading="auto", cmap=cmap, vmin=vmin, vmax=vmax)
+
+    # 6) Logarithmic radial axis
+    try:
+        ax.set_rscale("log")  # matplotlib >= 3.1
+    except Exception:
+        # Fallback: nothing; the plot still shows, just not with true log tick spacing
+        pass
+    ax.set_theta_zero_location("E")  # 0 at +x
+    ax.set_theta_direction(-1)       # clockwise like usual polar plots
+
+    # 7) Crossing scale marker
+    R_cross = float(hit["R_cross"])
+    ph = np.linspace(0.0, 2.0*np.pi, 1024)
+    print('R_cross:', R_cross/pc2cm)
+    ax.plot(ph, np.full_like(ph, R_cross/pc2cm), lw=2.0, color="limegreen", alpha=0.9, label="R_cross")
+
+    # 8) Aesthetics
+    cbar = fig.colorbar(pc, ax=ax, pad=0.08, shrink=0.9)
+    cbar.set_label(units)
+    ax.tick_params(axis="y", colors="green")  
+    ax.set_title(title or f"Equatorial polar slice (±{theta_tol_deg:.1f}°), nside={nside}, Nr={Nr}")
+    ax.legend(loc="upper right", bbox_to_anchor=(1.15, 1.15))
+
+    if show:
+        plt.show()
+
+    return fig, ax, {"r_edges": r_edges, "phi_edges": phi_edges, "Z": Z_disp, "units": units}
 
 
 
