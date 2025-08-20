@@ -170,17 +170,19 @@ class trajectory
 Randomly draw a trajectory of Gaussian perturbations, given a grid structure (above)
 """	
 class trajectory():
-	def __init__(self, grid=None, delta=None, v=None, vdir=None, iscale=0, iresample=None, dt_factor=0.1, **kwargs):
+	def __init__(self, grid=None, delta=None, v=None, vdir=None, iscale=0, iresample=None, dt_factor=0.1, t0=0.0, baseline_fn=None, **kwargs):
 	
 		if grid is None:
 			grid = trajectory_grid(**kwargs)
 		
 		self.grid = grid
 		
-		self.t = 0.0
+		self.t = t0
 		self.ts = np.array([])
 		self.dt_factor = dt_factor
 		self.dt = np.amin(self.grid.tau_R)*self.dt_factor
+
+		self.baseline_fn = baseline_fn
 		
 
 		self.kwargs = kwargs
@@ -219,25 +221,77 @@ class trajectory():
 		self.vs =[]
 		self.deltas = []
 
+	def _get_baseline(self, t_seconds):
+		"""
+		Returns (rho0_t, v0_t, Lcut_t) from the user-supplied baseline_fn, or defaults.
+		- rho0_t: scalar (>0)
+		- v0_t:   np.array shape (3,) velocity offset [same units as your vectors]
+		- Lcut_t: float, cutoff scale [cm]; ignore all perturbation levels with scale > Lcut_t
+		"""
+		if t_seconds is None:
+			t_seconds = self.t
+		
+		if callable(self.baseline_fn):
+			out = self.baseline_fn(t_seconds)
+			rho0_t = float(out.get("rho0", self.grid.rho0))
+			v0_t   = np.asarray(out.get("v0", np.zeros(3, dtype=float)), dtype=float).reshape(3,)
+			Lcut_t = float(out.get("Lcut", np.inf))
+		else:
+			rho0_t = float(self.grid.rho0)
+			v0_t   = np.zeros(3, dtype=float)
+			Lcut_t = np.inf
+		return rho0_t, v0_t, Lcut_t
+	
+	def _active_level_masks(self, Lcut):
+		"""
+		Returns:
+		scale_mask: list of bools for scales <= Lcut
+		"""
+		scale_mask   = np.asarray([ (s <= Lcut) for s in self.grid.rlevels ], dtype=bool) 
+		return scale_mask
+	
+	def _filtered_Ddelta(self, Ddelta=None):
+		if Ddelta is None:
+			Ddelta=self.Ddelta
+		rho0_t, v0_t, Lcut_t = self._get_baseline(self.t)
+		scale_mask = self._active_level_masks(Lcut_t)
+		Delta_delta = Ddelta
+		Delta_delta[~scale_mask] = 0.0  # zero out deltas for scales > Lcut_t
+		return Delta_delta
+	
+	def _filtered_Dv(self, Dv=None):
+		if Dv is None:
+			Dv = self.Dv
+		
+		rho0_t, v0_t, Lcut_t = self._get_baseline(self.t)
+		scale_mask = self._active_level_masks(Lcut_t)
+		Dv[~scale_mask] = 0.0
+		return Dv
 
 		
 	def resample_d_trajectory(self, imax):
+
 		self.cloud = cl.bound_clump(**self.kwargs)
 		DS = self.grid.Delta_S[imax:]
 		u_delta = np.random.uniform(size=DS.shape)
 		Delta_delta =  np.sqrt(2.*DS)*ss.erfinv(2.*u_delta-1.)
 		self.Ddelta[imax:] = Delta_delta
-		self.delta = np.cumsum(self.Ddelta)
+		Delta_delta_filt =  self._filtered_Ddelta(Delta_delta)
+		self.delta = np.cumsum(Delta_delta_filt)
 		self.cloud.find_collapse(self)
 		return self.Ddelta
 		
 	def resample_v_trajectory(self, imax):
+
 		
 		DSv = self.grid.Delta_Sv[imax:, np.newaxis]
 		u_v = np.random.uniform(size=(len(DSv), 3))
 		Delta_v = np.sqrt(2.*DSv)*ss.erfinv(2.*u_v-1.)
 		self.Dv[imax:] = Delta_v
-		self.v = np.cumsum(self.Dv, axis=0)
+
+		Delta_v_filt =  self._filtered_Dv(Delta_v)
+		self.v = np.cumsum(Delta_v_filt, axis=0)
+		
 		return self.Dv
 	
 	def resample_all(self, imax):
@@ -250,6 +304,10 @@ class trajectory():
 			Ddelta = self.Ddelta
 		if Dv is None:
 			Dv = self.Dv
+
+		Ddelta = self._filtered_Ddelta(Ddelta=Ddelta)
+		Dv = self._filtered_Dv(Dv=Dv)
+		
 		self.delta = np.cumsum(Ddelta)
 		self.v = np.cumsum(Dv, axis=0)
 		self.deltas.append(self.delta)
@@ -434,7 +492,6 @@ def GMC_MF(Nsample=1000, rmax=10.*h_*pc2cm):
 	iformed = np.zeros(Nsample, dtype=bool)
 	ntry = 0
 	for iN in range(Nsample):
-		print(iN)
 		qtraj = trajectory(grid=grid, dt_factor=0.1)
 		ntry += 1
 		while not qtraj.cloud.formed:

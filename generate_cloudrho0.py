@@ -219,12 +219,20 @@ def make_baseline_fn(times_sec, rho_med, R_cm, t_star, t_end, grid):
     idx = np.argsort(t)
     t, rho, R = t[idx], rho[idx], R[idx]
 
+
+    #Hack: make sure 
+    if R[1]>0.0 and np.isfinite(R[1]):
+        if R[0]==0.0 or ~np.isfinite(R[0]):
+            rho[0] = rho[1]
+            R[0] = R[1]
+    
+
     def baseline_fn(t_seconds):
         ts = float(t_seconds)
-        if (ts >= t_star) and (ts <= t_end):
+        if (ts >= t[0]) and (ts <= t_end):
             rho_t = float(np.interp(ts, t, rho))
             R_t   = float(np.interp(ts, t, R))
-            return {"rho0": rho_t, "v0": np.zeros(3, dtype=float), "Lcut": R_t}
+            return {"rho0": rho_t, "v0": np.zeros(3, dtype=float), "Lcut": R_t*2.}
         else:
             return {"rho0": float(grid.rho0), "v0": np.zeros(3, dtype=float), "Lcut": np.inf}
 

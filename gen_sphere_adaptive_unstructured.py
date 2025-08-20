@@ -42,20 +42,19 @@ class MultiResolutionArray:
 
 		pc2cm = 3.086e18  # Example constant
 		print("Defining spatial scales...")
-		if not grid is None:
-			rmax = grid.rlevels[0] / pc2cm  # Convert to pc
-			rmin = grid.rlevels[-1] / pc2cm
-		self.define_spatial_scales(rmax*pc2cm, rspatial*pc2cm, rmin*pc2cm, dr, cells_per_level)
+		if grid is None:
+			grid = exc.trajectory_grid(rmax=rmax*pc2cm, rmin=rmin*pc2cm, dr=dr)
+		
 
 		print("Initializing trajectory grid...")
-		if grid is None:
-			self.grid = exc.trajectory_grid(self.scales)
-		else:
-			self.grid = grid
+		self.grid = grid
+		
+		self.define_spatial_scales(rspatial*pc2cm, cells_per_level)
 
 
 		print("Generating spatial grid...")
 		self.generate_unstructured_levels()
+
 		
 		print(f"Initialized MultiResolutionArray with {len(self.scales)} resolutions.")
 
@@ -298,6 +297,7 @@ class MultiResolutionArray:
 		self.level_scalar = []      # list of (Nℓ,)
 		self.level_vector = []      # list of (Nℓ, 3)
 
+
 		for i, dx in enumerate(self.spatial_scales):
 			N = self.n_res[i]
 			R = dx * (N**(1.0/3.0))  # because N*<V_cell> = 4/3 π R^3 → R = dx * N^(1/3)
@@ -314,6 +314,8 @@ class MultiResolutionArray:
 			scal = np.sqrt(2.0 * DS)  * erfinv(2.0*u_s - 1.0)                  # (N,)
 			u_v = np.random.uniform(size=(N, 3))
 			vec  = np.sqrt(2.0 * DSV) * erfinv(2.0*u_v - 1.0)                  # (N,3)
+			
+		
 
 			self.level_positions.append(pos)
 			self.level_scalar.append(scal.astype(np.float64))
@@ -338,36 +340,41 @@ class MultiResolutionArray:
 		return np.stack([x, y, z], axis=-1)  # (N,3)
 	
 
-	def define_spatial_scales(self, rmax, rspatial, rmin, dr, n0):
+	def define_spatial_scales(self, rspatial, n0, grid=None):
 
 		#Definitions: scales is the scale of interest 
 		# 
-		scales = [rmax]
-		super_scales = [rmax]
+		
+		if grid is None:
+			grid = self.grid
+		
+		scales = []
+		super_scales = []
+		
 		ir = 0
-		while scales[-1] * dr > rspatial:
-			scales.append(scales[-1] * dr)
+		
+		while grid.rlevels[ir]>rspatial/(n0**(1./3.)):
+			scales.append(grid.rlevels[ir])
 			super_scales.append(scales[-1])
 			ir += 1
-		scales.append(rspatial)  # Ensure rspatial is included
+		
 		self.super_scales = super_scales  # these feed the turbulence model
 
 		# Define n_res at rspatial
-		n_res = [n0]
+		n_res = []
 	
 		# Generate spatial scales based on n_res
 		rscale = rspatial
-		self.spatial_scales = [rspatial] 
-		self.spatial_level = [ir]
+		self.spatial_scales = [] 
+		self.spatial_level = []
+		next_n_res = n0  # Enforce rule
 
-		while rscale > rmin:
-			next_n_res = n0  # Enforce rule
+		for ir_sp in range(ir, len(grid.rlevels)):
 			n_res.append(next_n_res)
-			rscale = rscale * dr 
+			rscale = self.grid.rlevels[ir_sp] 
 			scales.append(rscale)
 			self.spatial_scales.append(rscale)
-			ir+=1
-			self.spatial_level.append(ir)
+			self.spatial_level.append(ir_sp)
 
 		self.scales = np.array(scales)
 		self.spatial_scales = np.array(self.spatial_scales)
@@ -376,7 +383,7 @@ class MultiResolutionArray:
 		return self.scales
 
 
-	def generate_unstructured_levels(self):
+	'''def generate_unstructured_levels(self):
 		"""
 		For each spatial level l:
 		- Nl = fixed number of cells
@@ -414,7 +421,7 @@ class MultiResolutionArray:
 
 		# Keep super-scales as before (one value per super level)
 		self.super_resolutions  = [self.initialize_resolution(j, 1)[0] for j in range(len(self.super_scales))]
-		self.super_resolutions_v= [self.initialize_resolution(j, 1)[1] for j in range(len(self.super_scales))]
+		self.super_resolutions_v= [self.initialize_resolution(j, 1)[1] for j in range(len(self.super_scales))]'''
 
 
 	def level_cell_centers(self, i):
@@ -903,8 +910,6 @@ class MultiResolutionArray:
 		rho0_t, v0_t, Lcut_t = self._get_baseline(t_seconds)
 		super_mask, spatial_mask = self._active_level_masks(Lcut_t)
 
-		
-
 
 		# ---- Load/build coords ----
 		t0 = time.perf_counter()
@@ -1040,12 +1045,6 @@ class MultiResolutionArray:
 
 		lnrho_maps += self.grid.mu_lnrho[-1]
 		lnrho_maps += np.log(rho0_t) 
-
-		print(rho0_t, np.log(rho0_t), self.grid.mu_lnrho[-1])
-		plt.figure(figsize=(8, 6))
-		plt.hist(np.log10(np.exp(lnrho_maps.flatten())), bins=100, density=True, alpha=0.7, label='lnrho')
-		#plt.xscale('log')
-		plt.show()
 		
 		# add bulk velocity offset everywhere
 		v_maps += v0_t  # broadcast to (Nr, npix, 3)

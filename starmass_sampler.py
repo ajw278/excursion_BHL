@@ -2,21 +2,30 @@ import numpy as np
 import scipy.interpolate as interpolate
 import excursion as exc
 import cloud as cl
-from consts_defaults import pc2cm, Msol2g
+from consts_defaults import pc2cm, Msol2g, Gcgs
 import generate_cloudrho0 as gcr
 import gen_sphere_adaptive_unstructured as gsau
 import os 
 import matplotlib.pyplot as plt
-
+import core_analysis as ca
+import plot_jeans_regions as pjm
 # ---------- helpers ----------
 
 print('Current issues:')
 print('1. The star mass calculation is not working correctly. Needs to calculate turbulent structure around threshold density.')
 print('2. The trajectories that cross the threshold need to be resampled to reflect volume-weighting.')
 
+print("EDIT: NEED TO RETHINK PHYSICS --- ACTUALLY, SHOULD FIND JEANS UNSTABLE SUB-REGIONS DURING COLLAPSE")
+
 def pick_i_for_radius(grid, R_target_cm):
     r = np.asarray(grid.rlevels, dtype=float)
-    return int(np.argmin(np.abs(r - float(R_target_cm))))
+    return int(np.argmin(np.abs(r - float(R_target_cm)*2.)))
+
+
+def pick_i_for_jeans(grid, rho_star, c_s=0.1*1e5, G=Gcgs):
+    r = np.asarray(grid.rlevels, dtype=float)
+    RJ = jeans_length(rho_star, c_s=c_s, G=G)
+    return int(np.argmin(np.abs(r - RJ)))
 
 def make_rglobal_func(grid):
     """ρ_global(R): initial region density vs scale (from grid.rhocs)."""
@@ -27,6 +36,11 @@ def make_rglobal_func(grid):
 def rho_star_from_time(cloud, t_star_seconds):
     """ρ*(t*): initial density that has collapsed by t* (Girichidis inversion)."""
     return float(cloud.calc_rho_acc(t_star_seconds))
+
+def jeans_length(rho, c_s=0.1*1e5, G=Gcgs):
+    return c_s/np.sqrt(G*rho)
+
+
 
 def effective_delta(delta_cumulative, i0):
     """
@@ -48,16 +62,21 @@ def find_largest_upcrossing(traj, grid, rho_star, R0_cm):
     """
     r       = np.asarray(grid.rlevels,   dtype=float)
     delta   = np.asarray(traj.delta,      dtype=float)  # δ(R)
-    rho     = grid.rho0*np.exp(delta + grid.mu_lnrho)  # ρ(R) = ρ0 * exp(δ + μ_lnρ)
+    rho0_t, v0_t, Lcut_t = traj._get_baseline(0.0)
+    rho     = rho0_t*np.exp(delta + grid.mu_lnrho)  # ρ(R) = ρ0 * exp(δ + μ_lnρ)
     i0      = pick_i_for_radius(grid, R0_cm)
+    imax    = len(r) #pick_i_for_jeans(grid, rho_star)
+
+    RJ = jeans_length(rho_star)
 
 
     #print(f"R0 = {R0_cm/pc2cm:.3f} pc, i0 = {i0}, rho_star = {rho_star:.3e} g/cm^3, rho_g = {rho_g[i0]:.3e} g/cm^3")
 
     # First upcrossing from large->small scales
-    for i in range(i0, len(r)):
+    for i in range(i0, imax):
         #print(f"Checking i={i}, R={r[i]/pc2cm:.3f} pc, delta_e={delta_e[i]:.3f}, delta_th={delta_th[i]:.3f}")  # Debug output
         if rho[i] >= rho_star:
+            print(f"Crossed threshold (rho, rho_st, R, RJ): {rho[i]:.2e}, {rho_star:.2e}, {r[i]/pc2cm:.2f}, {RJ/pc2cm:.2f}")
             R_cross   = float(r[i])
             """plt.scatter(r/pc2cm, rho, marker='o', s=1, label='$\\rho(R)$')
             plt.axhline(rho_star, color='red', ls='--', label='$\\rho^*(t^*)$')
@@ -74,7 +93,7 @@ def find_largest_upcrossing(traj, grid, rho_star, R0_cm):
 # ---------- repeat-draw until upcrossing, then estimate M_* ----------
 
 def draw_trajectory_until_upcrossing(grid, cloud, t_star_seconds, R0_cm,
-                                     dt_factor=0.1, max_tries=3000, seed=None, progress=False):
+                                     dt_factor=0.1, max_tries=3000, seed=None, progress=False, baseline_fn=None):
     rho_star = rho_star_from_time(cloud, t_star_seconds)   # collapsed-threshold density (pre-collapse) at t*
 
     print(f"Required density: {rho_star:.3e} g/cm^3 at t*={t_star_seconds:.3f} s")
@@ -87,7 +106,14 @@ def draw_trajectory_until_upcrossing(grid, cloud, t_star_seconds, R0_cm,
     for n in range(max_tries):
         # draw a trajectory; seed handling depends on excursion.trajectory API
         try:
-            traj = exc.trajectory(grid=grid, dt_factor=dt_factor, seed=None if seed is None else seed + n)
+            #Note -- t0 is zero because we are mapping densities to t=0! 
+            traj = exc.trajectory(grid=grid, dt_factor=dt_factor, baseline_fn=baseline_fn, t0=0.0, seed=None if seed is None else seed + n) 
+            '''plt.scatter(traj.grid.rlevels/pc2cm, traj.baseline_fn(0.0)['rho0'] *np.exp(traj.delta+traj.grid.mu_lnrho))
+            plt.axvline(traj.baseline_fn(0.0)["Lcut"]/pc2cm)
+            plt.axhline(rho_star)
+            plt.yscale('log')
+            plt.xscale('log')
+            plt.show()'''
         except TypeError:
             if seed is not None:
                 np.random.seed(seed + n)
@@ -100,9 +126,12 @@ def draw_trajectory_until_upcrossing(grid, cloud, t_star_seconds, R0_cm,
             continue
 
         R_cross = float(hit["R_cross"])
+        R_J = jeans_length(rho_star)
         # Guard against any numerical weirdness
         denom = max(R_cross, Rmin_grid)
-        p_accept = min(1.0, (Rmin_grid / denom) ** 3)
+        num = Rmin_grid
+        p_accept = min(1.0, (num / denom) ** 3)
+        print(f'Denominator: {R_cross/pc2cm:.2f}, {Rmin_grid/pc2cm:.2f}, {R_J/pc2cm:.2f}')
 
         # Accept–reject
         u = rng.random()
@@ -137,7 +166,6 @@ def star_mass_from_hit(cloud, hit, use_exponential_profile=True):
     baseline_fn=None,
     mra_kwargs=None,
     cells_per_level=100,
-    dr=0.5,
     profile=True,
     maxspatial_pc=Rcloud_max
     )
@@ -176,7 +204,6 @@ def init_mra_from_hit_trajectory(
     baseline_fn=None,
     mra_kwargs=None,
     cells_per_level=100,
-    dr=0.8,
     profile=True,
     maxspatial_pc=100.0,
     #usegrid=False,
@@ -273,9 +300,9 @@ def init_mra_from_hit_trajectory(
         for i in range(N)
     ]
 
-    print(f"Applying {len(overrides)} Ddelta overrides to MRA (scales in pc):")
+    """print(f"Applying {len(overrides)} Ddelta overrides to MRA (scales in pc):")
     for i, ov in enumerate(overrides):
-        print(f"  {i:3d}: pos={ov['pos']}, scale={ov['scale']/pc2cm:.3f} pc, Ddelta={ov['Ddelta']:.3f}")
+        print(f"  {i:3d}: pos={ov['pos']}, scale={ov['scale']/pc2cm:.3f} pc, Ddelta={ov['Ddelta']:.3f}")"""
     
     mra.apply_delta_overrides(overrides, default_kind="scalar", profile=profile)
 
@@ -309,10 +336,10 @@ def sample_one_star(
     """
     # Build a new cloud+time draw so each star is independent
     # NOTE: we only need the 'data' dict from the builder (grid, cloud, t_star)
-    _, data = gcr.build_cloud_baseline_fn(
-        rmin = 0.01*pc2cm,  # 0.01 pc minimum radius
+    baseline_fn, data = gcr.build_cloud_baseline_fn(
+        rmin = 0.001*pc2cm,  # 0.01 pc minimum radius
         target_radius_cm=target_radius_cm,
-        drfact=0.95,
+        drfact=0.8,
         dt_myr=dt_myr,
         tmax_myr=tmax_myr,
         seed=base_seed
@@ -327,7 +354,7 @@ def sample_one_star(
     hit = draw_trajectory_until_upcrossing(
             grid, cloud, t_star, R0_cm,
             dt_factor=dt_factor, max_tries=max_tries,
-            seed=base_seed, progress=progress
+            seed=base_seed, progress=progress, baseline_fn=baseline_fn
         )
 
     # Convert to star mass
@@ -688,6 +715,9 @@ def plot_polar_equatorial_slice_from_mra(
     fig, ax, out
        out is dict with keys: {'r_edges', 'phi_edges', 'Z', 'units'}
     """
+
+    R_cross = float(hit["R_cross"])
+
     plt.figure(figsize=(8, 6))
     plt.plot(hit['traj'].grid.rlevels/pc2cm, hit['traj'].grid.rho0*np.exp(hit['traj'].delta+hit['traj'].grid.mu_lnrho), marker='o', ls='None')
     plt.yscale('log')
@@ -695,15 +725,21 @@ def plot_polar_equatorial_slice_from_mra(
     plt.xlabel("R (cm)")
     plt.ylabel("$\\rho$")
 
+    
+
     # 1) Evaluate on equal-area spherical grid
-    lnrho, _v = None, None
-    lnrho, _v, r_c, theta, phi, U = mra.evaluate_to_equal_area(
+    lnrho, v = None, None
+    lnrho, v, r_c, theta, phi, U = mra.evaluate_to_equal_area(
         Nr=Nr, nside=nside, coords_path=coords_path, return_coords=True
     )  # lnrho shape: (Nr, npix)
 
-    plt.figure(figsize=(8, 6))
-    plt.hist(np.log10(r_c), bins=50, histtype='step', label='r_c (pc)')
-    plt.show()
+
+    seeds = ca.run_pipeline(r=r_c, theta=theta, phi=phi, lnrho=lnrho)
+    
+    labels_local, cat_local =  ca.find_bound_region_within_sphere(r=r_c, theta=theta, phi=phi, lnrho=lnrho, v=v,   R_search_cm=R_cross)
+    X = ca.build_positions_cartesian(r_c, theta, phi)
+    pjm.plot_jeans_regions(X, labels_local, s=1.0, alpha=0.6, elev=20, azim=45,
+                       title=None, max_points_per_region=None)
 
     print('R_c:', np.unique(r_c/pc2cm))
 
@@ -714,6 +750,9 @@ def plot_polar_equatorial_slice_from_mra(
     if not np.any(eq_mask):
         raise RuntimeError("No HEALPix pixels fell within the equatorial tolerance; "
                            "try increasing theta_tol_deg or nside.")
+    
+    plot_size_linewidth(X, v)
+    plot_equatorial_polar_velocity( r_c, theta, phi, v, Nphi_bins=Nphi_bins, theta_tol_deg=theta_tol_deg, R_cross=R_cross)
 
     # 3) Bin by azimuth (phi) for each radius shell
     phi_sel = phi[eq_mask]
@@ -755,7 +794,6 @@ def plot_polar_equatorial_slice_from_mra(
         fig = ax.figure
 
     # Polar mesh wants (len(r_edges)-1, len(phi_edges)-1)
-    print('r_edges:', r_edges/pc2cm)
 
     PHI, R = np.meshgrid(phi_edges, r_edges)
     pc = ax.pcolormesh(PHI, R/pc2cm, Z_disp, shading="auto", cmap=cmap, vmin=vmin, vmax=vmax)
@@ -769,10 +807,7 @@ def plot_polar_equatorial_slice_from_mra(
     ax.set_theta_zero_location("E")  # 0 at +x
     ax.set_theta_direction(-1)       # clockwise like usual polar plots
 
-    # 7) Crossing scale marker
-    R_cross = float(hit["R_cross"])
     ph = np.linspace(0.0, 2.0*np.pi, 1024)
-    print('R_cross:', R_cross/pc2cm)
     ax.plot(ph, np.full_like(ph, R_cross/pc2cm), lw=2.0, color="limegreen", alpha=0.9, label="R_cross")
 
     # 8) Aesthetics
@@ -787,7 +822,371 @@ def plot_polar_equatorial_slice_from_mra(
 
     return fig, ax, {"r_edges": r_edges, "phi_edges": phi_edges, "Z": Z_disp, "units": units}
 
+import numpy as np
 
+def build_radial_shell_labels(
+    X,
+    n_shells=10,
+    center="centroid",      # "centroid", "origin", or a 3-vector
+    r_edges=None,           # if given, overrides n_shells/log spacing
+    logspace=True
+):
+    """
+    Return integer labels for concentric radial shells.
+
+    X : (N,3) positions [cm]
+    n_shells : number of shells (ignored if r_edges is provided)
+    center : "centroid" | "origin" | array-like(3)
+    r_edges : optional array of shell edges [cm], length = n_shells+1
+    logspace : use geometric spacing if True, else linear
+
+    Returns
+    -------
+    labels : (N,) ints in [0, n_shells-1]
+    r : (N,) radii from the chosen center [cm]
+    edges : (n_shells+1,) shell edges [cm]
+    """
+    X = np.asarray(X, float)
+    if isinstance(center, str):
+        if center == "centroid":
+            c = X.mean(axis=0)
+        elif center == "origin":
+            c = np.zeros(3, float)
+        else:
+            raise ValueError("center must be 'centroid', 'origin', or a 3-vector.")
+    else:
+        c = np.asarray(center, float)
+        if c.shape != (3,):
+            raise ValueError("center 3-vector must have shape (3,)")
+
+    r = np.linalg.norm(X - c[None, :], axis=1)
+
+    if r_edges is None:
+        rmax = float(np.nanmax(r))
+        if rmax <= 0:
+            raise ValueError("All radii are zero/nonpositive; cannot build shells.")
+        # Avoid log(0): make the first edge exactly 0 so points at r=0 fall into the first bin,
+        # and start geometric spacing just above 0.
+        if logspace:
+            # smallest positive radius as inner >0 reference; fallback to rmax/1e6
+            pos = r[r > 0]
+            rmin_pos = float(pos.min()) if pos.size else rmax/1e6
+            edges = np.geomspace(rmin_pos, rmax, n_shells)   # length n_shells
+            edges = np.concatenate([[0.0], edges])           # length n_shells+1, first edge at 0
+        else:
+            edges = np.linspace(0.0, rmax, n_shells+1)
+    else:
+        edges = np.asarray(r_edges, float)
+        if edges.ndim != 1 or edges.size < 2:
+            raise ValueError("r_edges must be a 1D array of length >= 2.")
+
+    # Bin: labels in [0, n_shells-1]; clamp rightmost into last bin
+    labels = np.digitize(r, edges, right=False) - 1
+    labels = np.clip(labels, 0, edges.size - 2)
+    return labels.astype(int), r, edges
+
+
+def plot_size_linewidth(
+    X, v,
+    *,
+    labels=None,
+    pc2cm=3.085677581e18,
+    v0=None,                         # optional 3-vector (cm/s) to subtract globally, e.g. origin velocity
+    subtract_region_mean=True,       # subtract each region's mean velocity before dispersion
+    min_points=50,                   # skip tiny regions
+    marker='o', alpha=0.7, ms=6,
+    fit=True, fit_color=None,        # log-log OLS fit in log10 space
+    title="Size–line width relation",
+    show=True,
+    n_shells=10,
+    shell_center="centroid",     # "centroid" | "origin" | 3-vector
+    shell_edges=None,            # optional custom edges [cm]
+    shell_logspace=True,
+):
+    """
+    Compute and plot σ_1D vs effective size for labeled regions.
+
+    Parameters
+    ----------
+    X : (N,3) positions in cm
+    v : (Nr,npix,3) or (N,3) velocities in cm/s
+    labels : (N,) int labels (negative => ignore)
+    v0 : None or (3,) global velocity to subtract (cm/s)
+    subtract_region_mean : bool, subtract <v> per region
+    min_points : int, minimum members per region to include
+    """
+
+
+    # Optional global subtraction (e.g., 'origin' velocity)
+    if v0 is not None:
+        v = v - np.asarray(v0)[None, :]
+    else:
+        v0 = np.nanmean(v[0, :, :], axis=0)  # shape (3,)
+        print(f"Zero velocity: {v0}")
+        v = v - v0[None, None, :]   # broadcast subtraction
+
+    # Flatten v if needed
+    if v.ndim == 3:
+        v = v.reshape(-1, 3)
+
+    if labels is None:
+        labels, r, used_edges = build_radial_shell_labels(
+            X, n_shells=n_shells, center=shell_center,
+            r_edges=shell_edges, logspace=shell_logspace
+        )
+    else:
+        labels = np.asarray(labels)
+        if labels.shape[0] != X.shape[0]:
+            raise ValueError(f"labels length {labels.shape[0]} != X length {X.shape[0]}")
+    
+    labels = np.asarray(labels)
+    m_keep = labels >= 0
+    X = np.asarray(X)[m_keep]
+    v = np.asarray(v)[m_keep]
+    labs = labels[m_keep]
+
+    if X.size == 0:
+        raise RuntimeError("No labeled points to analyze (labels >= 0).")
+
+    
+    uniq = np.unique(labs)
+    Reff_pc, sigma_kms, counts, lab_ids = [], [], [], []
+
+    for L in uniq:
+        idx = (labs == L)
+        if idx.sum() < min_points:
+            continue
+
+        XL = X[idx]
+        vL = v[idx]
+
+        # Effective radius from 3D RMS radius (then ×√(5/3))
+        xcent = XL.mean(axis=0)
+        r2 = np.sum((XL - xcent)**2, axis=1)
+        r_rms = np.sqrt(np.mean(r2))
+        R_eff = np.sqrt(5.0/3.0) * r_rms           # cm
+        R_eff_pc = R_eff / pc2cm
+
+        # Velocity dispersion: subtract region mean if requested
+        if subtract_region_mean:
+            vcent = vL.mean(axis=0)
+            vL = vL - vcent[None, :]
+
+        # 1D dispersion assuming isotropy: average of component variances
+        sig2_xyz = np.var(vL, axis=0, ddof=1)      # cm^2/s^2 per component
+        sigma_1d = np.sqrt(np.mean(sig2_xyz)) / 1e5  # km/s
+
+        Reff_pc.append(R_eff_pc)
+        sigma_kms.append(sigma_1d)
+        counts.append(idx.sum())
+        lab_ids.append(L)
+
+    Reff_pc = np.asarray(Reff_pc)
+    sigma_kms = np.asarray(sigma_kms)
+
+    if Reff_pc.size == 0:
+        raise RuntimeError("All regions were filtered out (min_points too high?).")
+
+    print(Reff_pc, sigma_kms)
+    # Plot
+    fig, ax = plt.subplots(figsize=(6.5, 5.5))
+    sc = ax.loglog(Reff_pc, sigma_kms, marker, ms=ms, alpha=alpha, linestyle='None', label="Regions")
+
+    # Optional fit (log10–log10)
+    fit_line = None
+    if fit and np.isfinite(Reff_pc).all() and np.isfinite(sigma_kms).all():
+        m, b = np.polyfit(np.log10(Reff_pc), np.log10(sigma_kms), 1)
+        xx = np.logspace(np.log10(Reff_pc.min()), np.log10(Reff_pc.max()), 200)
+        yy = 10**b * xx**m
+        ax.loglog(xx, yy, '--', lw=2, color=fit_color, label=fr"Fit: $\sigma \propto R^{m:.2f}$".format(m=m))
+        fit_line = (m, b)
+
+    ax.set_xlabel("Effective size $R_\\mathrm{eff}$ [pc]")
+    ax.set_ylabel("Line width $\\sigma_{1\\,\\mathrm{D}}$ [km s$^{-1}$]")
+    ax.set_title(title)
+    ax.grid(True, which='both', ls=':')
+    ax.legend()
+
+    # Return raw data too
+    info = {
+        "R_eff_pc": Reff_pc,
+        "sigma_1d_kms": sigma_kms,
+        "counts": np.asarray(counts),
+        "labels": np.asarray(lab_ids),
+        "fit_mb" : fit_line,  # (m, b in log10 space) or None
+    }
+
+    if show:
+        plt.show()
+
+    return fig, ax, info
+
+
+def plot_equatorial_polar_velocity(
+    r_c, theta, phi, v,
+    *,
+    Nphi_bins=72,
+    R_cross = 1.0*pc2cm,
+    theta_tol_deg=5.0,
+    cmap="coolwarm",
+    vmin=None, vmax=None,     # scalar or dict per component, otherwise auto symmetric
+    title=None,
+    show=True,
+):
+    """
+    Make equatorial polar projections (±theta_tol_deg) of vx, vy, vz
+    from vector field v (cm/s) sampled on equal-area spherical grid.
+
+    Parameters
+    ----------
+    r_c : array, shape (Nr,)
+        Radius centers [cm]
+    theta, phi : arrays, shape (npix,)
+        HEALPix polar/azimuth angles [rad] for a *single* shell; repeated for all shells.
+    v : array, shape (Nr, npix, 3)
+        Velocity in cm/s with components (vx, vy, vz) in the last dimension.
+    Nphi_bins : int
+        Number of azimuth bins (columns).
+    theta_tol_deg : float
+        Half-width of equatorial band in degrees.
+    R_cross : float
+        Reference radius to overlay [cm].
+    pc2cm : float
+        Conversion factor.
+    cmap : str
+        Matplotlib colormap.
+    vmin, vmax : None | float | dict
+        If None: auto symmetric per-component.
+        If float: same for all components.
+        If dict: keys "vx","vy","vz" with floats.
+
+    Returns
+    -------
+    fig, axes, info
+        axes is dict {"vx": ax_x, "vy": ax_y, "vz": ax_z}
+        info has r_edges, phi_edges, Z_kms (Nr, Nphi_bins, 3), units
+    """
+
+    Nr = len(r_c)
+    theta = np.asarray(theta)
+    phi   = np.asarray(phi)
+
+    # 1) Select equatorial band
+    eq_mask = np.abs(theta - 0.5*np.pi) <= np.deg2rad(theta_tol_deg)
+    if not np.any(eq_mask):
+        raise RuntimeError("No HEALPix pixels fell within the equatorial tolerance; "
+                           "increase theta_tol_deg or nside.")
+
+    # 2) Bin by azimuth (phi) for each radius shell
+    phi_sel = np.mod(phi[eq_mask], 2.0*np.pi)   # [0, 2π)
+    phi_edges = np.linspace(0.0, 2.0*np.pi, Nphi_bins + 1)
+    phi_bin_idx = np.digitize(phi_sel, phi_edges) - 1
+    phi_bin_idx = np.clip(phi_bin_idx, 0, Nphi_bins-1)
+
+    # Normalize to km/s
+    v_kms = v / 1e5  # shape (Nr, npix, 3)
+
+    # 3) Aggregate (mean over pixels in bin) for each component
+    Z = np.full((Nr, Nphi_bins, 3), np.nan, dtype=float)
+    for ir in range(Nr):
+        vals_x = v_kms[ir, eq_mask, 0]
+        vals_y = v_kms[ir, eq_mask, 1]
+        vals_z = v_kms[ir, eq_mask, 2]
+        for b in range(Nphi_bins):
+            m = (phi_bin_idx == b)
+            if np.any(m):
+                Z[ir, b, 0] = np.nanmean(vals_x[m])
+                Z[ir, b, 1] = np.nanmean(vals_y[m])
+                Z[ir, b, 2] = np.nanmean(vals_z[m])
+
+    # 4) Build r-edges for pcolormesh
+    def _centers_to_edges_geom(r):
+        """Geometric edges from monotonic centers."""
+        r = np.asarray(r, dtype=float)
+        if np.any(r <= 0):
+            raise ValueError("r must be positive for geometric edges.")
+        # interior edges are geometric means
+        re = np.sqrt(r[:-1] * r[1:])
+        # extrapolate first/last edges
+        r0 = r[0]**2 / re[0]
+        rN = r[-1]**2 / re[-1]
+        edges = np.concatenate([[r0], re, [rN]])
+        return edges
+
+    r_edges = _centers_to_edges_geom(r_c)
+
+    v0 = np.nanmean(v[0, :, :], axis=0)  # shape (3,)
+    print(f"Zero velocity: {v0}")
+    v = v - v0[None, None, :]   # broadcast subtraction
+
+    plt.figure()
+    plt.hist(np.linalg.norm(v.reshape(-1,3), axis=-1))
+    plt.show()
+
+    # 5) Set up figure with 3 polar subplots
+    comp_names = ["vx", "vy", "vz"]
+    units = "km s$^{-1}$"
+    fig = plt.figure(figsize=(18, 6.5))
+    axes = {}
+
+    # Helper to get vmin/vmax per component
+    def _get_lims(comp, Z2d):
+        # User-specified?
+        def pick(val, key):
+            if isinstance(val, dict): return val.get(key, None)
+            return val
+        vmin_c = pick(vmin, comp)
+        vmax_c = pick(vmax, comp)
+        if (vmin_c is None) or (vmax_c is None):
+            finite = np.isfinite(Z2d)
+            if not np.any(finite):
+                return -1.0, 1.0
+            amax = np.nanmax(np.abs(Z2d[finite]))
+            if amax == 0 or not np.isfinite(amax):
+                amax = 1.0
+            vmin_c = -amax if vmin_c is None else vmin_c
+            vmax_c =  amax if vmax_c is None else vmax_c
+        return vmin_c, vmax_c
+
+    # Common grids for pcolormesh
+    PHI, R = np.meshgrid(phi_edges, r_edges)
+
+    for i, comp in enumerate(comp_names):
+        ax = plt.subplot(1, 3, i+1, projection="polar")
+        axes[comp] = ax
+
+        Zc = Z[:, :, i]  # (Nr, Nphi_bins)
+        vmin_c, vmax_c = _get_lims(comp, Zc)
+
+        pc = ax.pcolormesh(PHI, R/pc2cm, Zc, shading="auto", cmap=cmap, vmin=vmin_c, vmax=vmax_c)
+
+        # Log radial axis if available
+        try:
+            ax.set_rscale("log")
+        except Exception:
+            pass
+        ax.set_theta_zero_location("E")
+        ax.set_theta_direction(-1)
+
+        # Reference radius
+        ph = np.linspace(0.0, 2.0*np.pi, 1024)
+        ax.plot(ph, np.full_like(ph, R_cross/pc2cm), lw=2.0, alpha=0.9, label="R_cross")
+
+        cbar = fig.colorbar(pc, ax=ax, pad=0.08, shrink=0.9)
+        cbar.set_label(f"{comp} [{units}]")
+        ax.tick_params(axis="y")
+        ax.set_title(f"{comp} (±{theta_tol_deg:.1f}°)")
+
+        ax.legend(loc="upper right", bbox_to_anchor=(1.12, 1.12))
+
+    suptitle = title or f"Equatorial polar velocity (nside=auto, Nr={len(r_c)})"
+    fig.suptitle(suptitle, y=1.02)
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+
+    return fig, axes, {"r_edges": r_edges, "phi_edges": phi_edges, "Z_kms": Z, "units": units}
 
 if __name__ == "__main__":
     # Parameters
@@ -800,7 +1199,7 @@ if __name__ == "__main__":
     masses_msun, meta = compute_or_load_imf(
          cache_path=cache_file,
          n_stars=1000,
-         target_radius_cm=1.0*pc2cm,
+         target_radius_cm=R0_cm,
          dt_myr=0.01,
          tmax_myr=10.0,
          base_seed=12345,
