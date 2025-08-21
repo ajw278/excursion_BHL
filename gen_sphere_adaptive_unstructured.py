@@ -18,6 +18,8 @@ import generate_cloudrho0 as gcr
 import warnings
 
 
+print("POSSIBLE BUG INTRODUCED FOR ACTIVE LEVEL MASKS -- NORMALISATION NOW ALWAYS rho0, BASELINE EFFECTS DELTA AT LCUT")
+
 pc2cm = 3.086e18  
 year2s = 3.154e7 
 
@@ -910,7 +912,6 @@ class MultiResolutionArray:
 		rho0_t, v0_t, Lcut_t = self._get_baseline(t_seconds)
 		super_mask, spatial_mask = self._active_level_masks(Lcut_t)
 
-
 		# ---- Load/build coords ----
 		t0 = time.perf_counter()
 		if coords_path is None or not os.path.exists(coords_path):
@@ -1044,7 +1045,7 @@ class MultiResolutionArray:
 
 
 		lnrho_maps += self.grid.mu_lnrho[-1]
-		lnrho_maps += np.log(rho0_t) 
+		lnrho_maps += np.log(self.grid.rho0) 
 		
 		# add bulk velocity offset everywhere
 		v_maps += v0_t  # broadcast to (Nr, npix, 3)

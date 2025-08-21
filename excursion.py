@@ -197,6 +197,9 @@ class trajectory():
 
 		self.Ddelta = np.zeros(self.grid.rlevels.shape)
 		self.Dv = np.zeros((len(self.grid.rlevels),3))
+
+		self.Ddelta_filtered = self.Ddelta
+		self.Dv_filtered = self.Dv
 		
 		self.iscale = iscale
 		if delta is None and v is None:
@@ -250,24 +253,102 @@ class trajectory():
 		scale_mask   = np.asarray([ (s <= Lcut) for s in self.grid.rlevels ], dtype=bool) 
 		return scale_mask
 	
-	def _filtered_Ddelta(self, Ddelta=None):
+
+	def _filtered_Ddelta(self, Ddelta=None, t_seconds=None, write_cache=True):
+		"""
+		Return a COPY of Δδ filtered by the baseline's cutoff at time t_seconds:
+		- zero out levels with R > Lcut(t)
+		- force the cumulative delta at the FIRST active level to match rho0(t)
+			via Δδ[:ifirst]=0 and Δδ[ifirst]=ln(rho0/rho_ref) - μ_lnρ[ifirst]
+		Never mutates self.Ddelta; optionally updates self.Ddelta_filtered cache.
+		"""
+		if t_seconds is None:
+			t_seconds = self.t
 		if Ddelta is None:
-			Ddelta=self.Ddelta
-		rho0_t, v0_t, Lcut_t = self._get_baseline(self.t)
-		scale_mask = self._active_level_masks(Lcut_t)
-		Delta_delta = Ddelta
-		Delta_delta[~scale_mask] = 0.0  # zero out deltas for scales > Lcut_t
-		return Delta_delta
-	
-	def _filtered_Dv(self, Dv=None):
+			Ddelta = self.Ddelta
+
+		rho0_t, v0_t, Lcut_t = self._get_baseline(t_seconds)
+		r = self.grid.rlevels
+
+		out = np.zeros_like(Ddelta, dtype=float)  # start clean
+		# active mask
+		mask = (r <= Lcut_t)
+		if not np.any(mask):
+			if write_cache:
+				self.Ddelta_filtered = out
+			return out
+
+		# copy original increments on active levels
+		out[mask] = np.array(Ddelta[mask], copy=True)
+
+		# pin first active cumulative to baseline density
+		ifirst = int(np.flatnonzero(mask)[0])
+		# target delta so that rho = rho0_t * exp(delta + mu) at ifirst
+		# i.e. delta_target = ln(rho0_t / rho_ref) - mu(ifirst), with rho_ref=self.grid.rho0
+		# (consistent with how you reconstruct rho everywhere else)
+		delta_target = np.log(rho0_t / self.grid.rho0) - self.grid.mu_lnrho[ifirst]
+		out[:ifirst] = 0.0
+		out[ifirst]  = float(delta_target)
+
+		if write_cache:
+			self.Ddelta_filtered = out
+		return out
+
+
+	def _filtered_Dv(self, Dv=None, t_seconds=None, write_cache=True):
+		"""
+		Return COPY of Δv filtered by Lcut(t): zero out levels with R > Lcut(t).
+		Does NOT bake in v0; add v0 at reconstruction time if you need it.
+		"""
+		if t_seconds is None:
+			t_seconds = self.t
 		if Dv is None:
 			Dv = self.Dv
-		
-		rho0_t, v0_t, Lcut_t = self._get_baseline(self.t)
-		scale_mask = self._active_level_masks(Lcut_t)
-		Dv[~scale_mask] = 0.0
-		return Dv
 
+		_, v0_t, Lcut_t = self._get_baseline(t_seconds)
+		r = self.grid.rlevels
+		out = np.zeros_like(Dv, dtype=float)
+		mask = (r <= Lcut_t)
+		if np.any(mask):
+			out[mask] = np.array(Dv[mask], copy=True)
+		if write_cache:
+			self.Dv_filtered = out
+		return out
+
+	def density_profile(self, t_seconds=None, filtered=True):
+		if t_seconds is None:
+			t_seconds = self.t
+		Dd = self._filtered_Ddelta(self.Ddelta, t_seconds, write_cache=False) if filtered else self.Ddelta
+		delta = np.cumsum(Dd)
+		return self.grid.rho0 * np.exp(delta + self.grid.mu_lnrho)
+
+	def velocity_profile(self, t_seconds=None, filtered=True, include_v0=True):
+		if t_seconds is None:
+			t_seconds = self.t
+		Dv = self._filtered_Dv(self.Dv, t_seconds, write_cache=False) if filtered else self.Dv
+		v = np.cumsum(Dv, axis=0)
+		if include_v0:
+			_, v0_t, _ = self._get_baseline(t_seconds)
+			v = v + np.asarray(v0_t, float)[None, :]
+		return v
+	
+	def find_unstable(self, t_seconds, type='biggest', filtered=True):
+		Dd = self._filtered_Ddelta(self.Ddelta, t_seconds, write_cache=False) if filtered else self.Ddelta
+		delta = np.cumsum(Dd)
+
+		col = delta>self.grid.delta_c
+		
+		if np.sum(col>0):
+			ismall = np.max(np.where(col)[0])
+			ibig = np.min(np.where(col)[0])
+			if type=='smallest':
+				return ismall
+			elif type=='biggest':
+				return ibig
+			else:
+				raise ValueError("Type of unstable mode must be 'biggest' or 'smallest'")
+		
+		return None
 		
 	def resample_d_trajectory(self, imax):
 
@@ -305,8 +386,9 @@ class trajectory():
 		if Dv is None:
 			Dv = self.Dv
 
-		Ddelta = self._filtered_Ddelta(Ddelta=Ddelta)
-		Dv = self._filtered_Dv(Dv=Dv)
+		if not self.baseline_fn is None:
+			self._filtered_Ddelta(write_cache=True)
+			self._filtered_Dv(write_cache=True)
 		
 		self.delta = np.cumsum(Ddelta)
 		self.v = np.cumsum(Dv, axis=0)

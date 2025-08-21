@@ -16,6 +16,7 @@ print('1. The star mass calculation is not working correctly. Needs to calculate
 print('2. The trajectories that cross the threshold need to be resampled to reflect volume-weighting.')
 
 print("EDIT: NEED TO RETHINK PHYSICS --- ACTUALLY, SHOULD FIND JEANS UNSTABLE SUB-REGIONS DURING COLLAPSE")
+print("Can walk forward in time, evolve/sample trajectories -- look for regeions that already collapsed")
 
 def pick_i_for_radius(grid, R_target_cm):
     r = np.asarray(grid.rlevels, dtype=float)

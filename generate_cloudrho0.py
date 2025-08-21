@@ -121,7 +121,7 @@ def run_cloud_evolution(grid, icol, tform_seconds=0.0, dt_myr=0.01, tmax_myr=10.
     rng = np.random.default_rng(seed)
 
     # Form the clump at the requested grid level, zero pos/vel, tform
-    cloud = cl.bound_clump()
+    cloud = cl.bound_clump(eps_core=1.0)
     position = np.zeros(3, dtype=float)
     velocity = np.zeros(3, dtype=float)
     cloud.form_nontraj(icol=icol, grid=grid, position=position, velocity=velocity, tform=tform_seconds)
