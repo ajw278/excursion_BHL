@@ -225,7 +225,6 @@ def make_baseline_fn(times_sec, rho_med, R_cm, t_star, t_end, grid):
         if R[0]==0.0 or ~np.isfinite(R[0]):
             rho[0] = rho[1]
             R[0] = R[1]
-    
 
     def baseline_fn(t_seconds):
         ts = float(t_seconds)

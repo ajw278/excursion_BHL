@@ -313,6 +313,13 @@ class trajectory():
 			out[mask] = np.array(Dv[mask], copy=True)
 		if write_cache:
 			self.Dv_filtered = out
+
+		ifirst = int(np.flatnonzero(mask)[0])
+		deltav_target = v0_t
+		out[:ifirst] = 0.0
+		out[ifirst]  = float(deltav_target)
+
+		
 		return out
 
 	def density_profile(self, t_seconds=None, filtered=True):
@@ -322,14 +329,14 @@ class trajectory():
 		delta = np.cumsum(Dd)
 		return self.grid.rho0 * np.exp(delta + self.grid.mu_lnrho)
 
-	def velocity_profile(self, t_seconds=None, filtered=True, include_v0=True):
+	def velocity_profile(self, t_seconds=None, filtered=True):
 		if t_seconds is None:
 			t_seconds = self.t
 		Dv = self._filtered_Dv(self.Dv, t_seconds, write_cache=False) if filtered else self.Dv
 		v = np.cumsum(Dv, axis=0)
-		if include_v0:
+		'''if include_v0:
 			_, v0_t, _ = self._get_baseline(t_seconds)
-			v = v + np.asarray(v0_t, float)[None, :]
+			v = v + np.asarray(v0_t, float)[None, :]'''
 		return v
 	
 	def find_unstable(self, t_seconds, type='biggest', filtered=True):

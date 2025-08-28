@@ -56,28 +56,27 @@ def effective_delta(delta_cumulative, i0):
 
 # ---------- core: upcrossing on the correct barrier ----------
 
-def find_largest_upcrossing(traj, grid, rho_star, R0_cm):
+def find_largest_upcrossing(traj, grid, time, R0_cm):
     """
     Use ρ_global(R)=grid.rhocs as the baseline, and ρ*(t*) as the collapse threshold.
     Returns crossing info at the largest scale (first from large->small) or None if no hit.
     """
     r       = np.asarray(grid.rlevels,   dtype=float)
-    delta   = np.asarray(traj.delta,      dtype=float)  # δ(R)
     rho0_t, v0_t, Lcut_t = traj._get_baseline(0.0)
-    rho     = rho0_t*np.exp(delta + grid.mu_lnrho)  # ρ(R) = ρ0 * exp(δ + μ_lnρ)
+    rho     = traj.density_profile(t_seconds=time,filtered=True)  # ρ(R) = ρ0 * exp(δ + μ_lnρ)
     i0      = pick_i_for_radius(grid, R0_cm)
     imax    = len(r) #pick_i_for_jeans(grid, rho_star)
-
-    RJ = jeans_length(rho_star)
 
 
     #print(f"R0 = {R0_cm/pc2cm:.3f} pc, i0 = {i0}, rho_star = {rho_star:.3e} g/cm^3, rho_g = {rho_g[i0]:.3e} g/cm^3")
 
     # First upcrossing from large->small scales
-    for i in range(i0, imax):
+    for i in range(i0, imax)[::-1]:
         #print(f"Checking i={i}, R={r[i]/pc2cm:.3f} pc, delta_e={delta_e[i]:.3f}, delta_th={delta_th[i]:.3f}")  # Debug output
-        if rho[i] >= rho_star:
-            print(f"Crossed threshold (rho, rho_st, R, RJ): {rho[i]:.2e}, {rho_star:.2e}, {r[i]/pc2cm:.2f}, {RJ/pc2cm:.2f}")
+        print(i)
+        print(rho[i]/grid.rhocs[i])
+        if rho[i] >= grid.rhocs[i]:
+            print(f"Crossed threshold (rho, rho_st, R, RJ): {rho[i]:.2e},{r[i]/pc2cm:.2f}")
             R_cross   = float(r[i])
             """plt.scatter(r/pc2cm, rho, marker='o', s=1, label='$\\rho(R)$')
             plt.axhline(rho_star, color='red', ls='--', label='$\\rho^*(t^*)$')
@@ -87,14 +86,13 @@ def find_largest_upcrossing(traj, grid, rho_star, R0_cm):
             plt.ylabel("$\\rho$ [g cm$^{-3}$]")
             plt.show()"""
 
-            return dict(index=i, i0=i0, R_cross=R_cross, rho_pre_cross=rho_star,
-                        delta_eff_at_cross=float(delta[i]))
+            return dict(index=i, i0=i0, R_cross=R_cross, rho_pre_cross=grid.rhocs[i])
     return None
 
 # ---------- repeat-draw until upcrossing, then estimate M_* ----------
 
 def draw_trajectory_until_upcrossing(grid, cloud, t_star_seconds, R0_cm,
-                                     dt_factor=0.1, max_tries=3000, seed=None, progress=False, baseline_fn=None):
+                                     dt_factor=0.1, max_tries=3000, seed=None, progress=False, baseline_fn=None, Rmin=0.01*pc2cm):
     rho_star = rho_star_from_time(cloud, t_star_seconds)   # collapsed-threshold density (pre-collapse) at t*
 
     print(f"Required density: {rho_star:.3e} g/cm^3 at t*={t_star_seconds:.3f} s")
@@ -120,7 +118,7 @@ def draw_trajectory_until_upcrossing(grid, cloud, t_star_seconds, R0_cm,
                 np.random.seed(seed + n)
             traj = exc.trajectory(grid=grid, dt_factor=dt_factor)
 
-        hit = find_largest_upcrossing(traj, grid, rho_star, R0_cm)
+        hit = find_largest_upcrossing(traj, grid, t_star_seconds, R0_cm)
         if hit is None:
             if progress and (n+1) % 50 == 0:
                 print(f"[{n+1} tries] no upcross yet...")
@@ -130,7 +128,10 @@ def draw_trajectory_until_upcrossing(grid, cloud, t_star_seconds, R0_cm,
         R_J = jeans_length(rho_star)
         # Guard against any numerical weirdness
         denom = max(R_cross, Rmin_grid)
-        num = Rmin_grid
+        if Rmin is None:
+            num = Rmin_grid
+        else:
+            num = Rmin
         p_accept = min(1.0, (num / denom) ** 3)
         print(f'Denominator: {R_cross/pc2cm:.2f}, {Rmin_grid/pc2cm:.2f}, {R_J/pc2cm:.2f}')
 
@@ -394,7 +395,7 @@ def sample_imf(
                 base_seed=seed_i,
                 dt_factor=dt_factor,
                 max_tries=max_tries,
-                progress=False
+                progress=True
             )
             masses.append(Mstar)
             hits.append(hit)
