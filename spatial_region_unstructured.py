@@ -132,6 +132,13 @@ class BinaryUnstructuredField:
             offset += n
         self.N_total = offset
 
+        self.node_level = np.empty(self.N_total, dtype=np.int32)
+        self.grid_index = np.empty(self.N_total, dtype=np.int32)
+        for v in self.levels:
+            s = slice(v.offset, v.offset + v.n)
+            self.node_level[s] = int(v.level)
+            self.grid_index[s] = int(v.grid_index)
+
         self.delta   = np.zeros(self.N_total, dtype=float)
         self.delta_v = np.zeros((self.N_total, 3), dtype=float)
         self.pos     = np.zeros((self.N_total, 3), dtype=float)
@@ -149,6 +156,9 @@ class BinaryUnstructuredField:
 
 
         self.clouds: list[CloudRecord] = []
+
+        self.spawn_check_factor = 0.1   # every 0.1 * tau_R by default
+        self._next_cloud_check: dict[int, float] = {}  # level -> next check time (s)
 
         # cache: repeated aggregations are common
         self._agg_cache: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
@@ -330,6 +340,17 @@ class BinaryUnstructuredField:
     
 
     # --------- clouds ----------
+    def _init_cloud_check_schedule(self, t0: float = 0.0):
+        """
+        Initialize next-check times for all logical levels at t0 + f * tau_R.
+        """
+        self._next_cloud_check = {}
+        for lv in self.levels:
+            gi = int(lv.grid_index)
+            tau = float(self.grid.tau_R[gi])
+            self._next_cloud_check[int(lv.level)] = float(t0) + self.spawn_check_factor * tau
+
+
     def _cloud_radius_at(self, rec: CloudRecord, t_seconds: float) -> float:
         """Return R_affect(t)=Lcut(t)/2 for a stored cloud record; NaN if unknown."""
         if rec.baseline_fn is None:
@@ -620,13 +641,28 @@ class BinaryUnstructuredField:
         start_time_s: float = 0.0,
         percent_clip: Tuple[float, float] = (2.0, 98.0),
         verbose: bool = True,
+        overwrite: bool = False, 
     ):
         """
         Time-march OU fields, writing snapshots of the finest level every dt_snap_s.
         """
+        
         os.makedirs(snapshot_dir, exist_ok=True)
+
+        # If frames already exist and overwrite=False, don't rerun; just return.
+        existing_frames = sorted(f for f in os.listdir(snapshot_dir)
+                                if f.startswith("frame_") and f.endswith(".npz"))
+        if existing_frames and not overwrite:
+            if verbose:
+                print(f"[evolve] Found {len(existing_frames)} frames in '{snapshot_dir}'. "
+                    "Skipping evolution (set overwrite=True to regenerate).")
+            return
+
+
         t = float(start_time_s)
         next_snap = t
+        # initialize cloud-check schedule (first checks happen at t0 + 0.1*tau_R)
+        self._init_cloud_check_schedule(t)
 
         # initial snapshot
         self.save_snapshot(t, snapshot_dir, percent_clip=percent_clip, frame_idx=0)
@@ -635,9 +671,25 @@ class BinaryUnstructuredField:
 
         while t < Tend_s:
             dt = min(dt_s, Tend_s - t)
+            # advance OU
+            dt = min(dt_s, Tend_s - t)
             self.step(dt)
+            t += dt
+
+            # update cloud positions (state on disk matched to this snapshot_dir)
             self.update_cloud_positions(t, snapshot_dir=snapshot_dir, save_state=True)
-            self.check_and_spawn_clouds(t_seconds=t, verbose=False)
+
+            # throttle cloud spawning checks: only levels whose next_check <= t
+            eligible_levels = [lv.level for lv in self.levels
+                            if self._next_cloud_check.get(lv.level, -np.inf) <= t]
+            if eligible_levels:
+                self.check_and_spawn_clouds(t_seconds=t, levels=eligible_levels, verbose=False)
+                # bump their next-check times by 0.1 * tau_R(level)
+                for lv in self.levels:
+                    if lv.level in eligible_levels:
+                        gi = int(lv.grid_index)
+                        tau = float(self.grid.tau_R[gi])
+                        self._next_cloud_check[lv.level] = t + self.spawn_check_factor * tau
 
             t += dt
 
@@ -923,39 +975,26 @@ class BinaryUnstructuredField:
         extent = [xmin, xmax, ymin, ymax]  # for imshow
         return img, extent
     
-    def make_column_video(self,
-                      snapshot_dir: str = "snapshots_unstructured",
-                      outfile: str = "column.mp4",
-                      *,
-                      axis: str = "z",
-                      nxy: int = 512,
-                      fov_cm: float = None,
-                      sigma_fac: float = 0.6,
-                      kappa: float = 3.0,
-                      to_NH: bool = True,
-                      mu_mass: float = 2.33,
-                      mH: float = 1.6735575e-24,
-                      fps: int = 12,
-                      cmap: str = "inferno",
-                      vmin: float = None,
-                      vmax: float = None,
-                      show_cloud_radius: bool = True):
-        """
-        Render a time series of column-density maps from saved frames (frame_*.npz).
-        Requires that your save_snapshot() stored pos_cm and rho (it does).
-        """
+    def make_column_video(self, snapshot_dir="snapshots_unstructured", outfile="column.mp4",
+                      *, axis="z", nxy=512, fov_cm=None, sigma_fac=0.6, kappa=3.0,
+                      to_NH=True, mu_mass=2.33, mH=1.6735575e-24, fps=12, cmap="inferno",
+                      vmin=None, vmax=None, show_cloud_radius=True, draw_cloud_rings=True,
+                      ring_kwargs=None, show_ids=False, save_R_series=True,
+                      R_series_filename="cloud_radius_vs_time.npy", label_radius_pc=True,
+                      id_kwargs=None):
         import os, numpy as np, matplotlib.pyplot as plt
         from matplotlib import animation
+        from matplotlib.patches import Circle  # <-- needed for ring overlays
+        from consts_defaults import year2s, pc2cm
 
         frames = sorted(f for f in os.listdir(snapshot_dir) if f.startswith("frame_") and f.endswith(".npz"))
         if not frames:
             raise RuntimeError("No frames found; run evolve() first (it writes frame_XXXX.npz).")
 
-        # Finest-cell radius (constant per run): r_cell = 0.5 * R_finest
         gi_finest = self.levels[-1].grid_index
         r_cell = 0.5 * float(self.grid.rlevels[gi_finest])
 
-        # First pass: determine global color limits if not provided
+        # global color limits if not provided
         if vmin is None or vmax is None:
             vals = []
             for f in frames:
@@ -975,115 +1014,98 @@ class BinaryUnstructuredField:
             else:
                 vmin, vmax = 0.0, 1.0
 
-        # Set up animation
-        fig, ax = plt.subplots(figsize=(6, 5))
+        # --- single figure/axes ---
+        fig, ax = plt.subplots(figsize=(7.0, 6.0))
         d0 = np.load(os.path.join(snapshot_dir, frames[0]))
-        img0, extent = self._column_map_from_points(d0["pos_cm"], d0["rho"], r_cell,
+        img0, extent0 = self._column_map_from_points(d0["pos_cm"], d0["rho"], r_cell,
                                                     axis=axis, nxy=nxy, fov_cm=fov_cm,
                                                     sigma_fac=sigma_fac, kappa=kappa,
                                                     to_NH=to_NH, mu_mass=mu_mass, mH=mH)
-        im = ax.imshow(np.log10(img0 + 1e-99) if to_NH else np.log10(img0 + 1e-99),
-                    extent=extent, origin="lower", cmap=cmap,
+        # if fov was None, freeze it from first frame for consistent axes
+        if fov_cm is None:
+            fov_cm = float(extent0[1] - extent0[0])  # assume square
+        ax.set_aspect("equal")
+
+        im = ax.imshow(np.log10(img0 + 1e-99),
+                    extent=extent0, origin="lower", cmap=cmap,
                     vmin=np.log10(vmin + 1e-99), vmax=np.log10(vmax + 1e-99))
         cb = plt.colorbar(im, ax=ax, pad=0.01)
         cb.set_label(r"$\log_{10} N_{\mathrm{H}}\,[\mathrm{cm}^{-2}]$" if to_NH else r"$\log_{10}\Sigma\,[\mathrm{g\,cm^{-2}}]$")
         ax.set_xlabel("x [cm]" if axis in ("z","y") else "y [cm]")
         ax.set_ylabel("y [cm]" if axis in ("z","x") else "z [cm]")
-
         title = ax.set_title("")
 
-        # Optional overlay: projected cloud radius
         ring_kwargs = dict(ec="cyan", lw=1.4, fill=False, alpha=0.9) if ring_kwargs is None else ring_kwargs
         id_kwargs   = dict(color="cyan", fontsize=8) if id_kwargs is None else id_kwargs
+        ring_artists = {}
+        id_artists = {}
 
-        # --- load your frames & times as you already do ---
-        times_path = os.path.join(snapshot_dir, "snapshot_times.npy")
+        # use the file you actually wrote in save_snapshot()
+        times_path = os.path.join(snapshot_dir, "times.npy")
         t_array = np.load(times_path) if os.path.exists(times_path) else None
 
-        # build first frame image (your current code)... and capture `extent`
-        fig, ax = plt.subplots(figsize=(7.0, 6.0))
-        # im = ax.imshow(first_frame, extent=extent, origin="lower", ... )
-        ax.set_aspect("equal")  # IMPORTANT so circles look right
-
-        # --- ring artist cache so we update instead of recreating each frame ---
-        ring_artists: dict[str, Circle] = {}
-        id_artists: dict[str, any] = {}
-
         def _update_cloud_overlays(t_s: float):
-            """Create/update/remove one ring (and optional id label) per cloud that exists at time t_s."""
-            if not draw_cloud_rings or not hasattr(self, "clouds") or len(self.clouds) == 0:
-                # clear any leftovers
-                for c in list(ring_artists.values()):
-                    c.remove()
+            if not draw_cloud_rings or not getattr(self, "clouds", None):
+                for c in list(ring_artists.values()): c.remove()
                 ring_artists.clear()
-                for txt in list(id_artists.values()):
-                    txt.remove()
+                for txt in list(id_artists.values()): txt.remove()
                 id_artists.clear()
                 return
-
             visible_now = set()
-
-            # loop all clouds; draw those that have formed and have finite radius
             for rec in self.clouds:
-                if t_s < float(rec.t_init_s):
-                    continue  # not formed yet
-
-                # center & radius at this global time
+                if t_s < float(rec.t_init_s):  # not formed yet
+                    continue
                 C3 = self._cloud_center_at(rec, t_s)
                 R  = self._cloud_R_affect(rec, t_s)
                 if not np.isfinite(R) or R <= 0.0:
                     continue
-
                 cx, cy = self._project_xy(C3[None, :], axis=axis)
                 cid = rec.cloud_id
                 visible_now.add(cid)
-
                 if cid in ring_artists:
-                    # move + resize
                     r = ring_artists[cid]
-                    r.center = (float(cx[0]), float(cy[0]))
-                    r.set_radius(float(R))
+                    r.center = (float(cx[0]), float(cy[0])); r.set_radius(float(R))
                 else:
-                    # create
                     r = Circle((float(cx[0]), float(cy[0])), float(R), **ring_kwargs)
-                    ax.add_patch(r)
-                    ring_artists[cid] = r
-
+                    ax.add_patch(r); ring_artists[cid] = r
                 if show_ids:
                     label = f"{cid[:6]}"
+                    if label_radius_pc:
+                        label += f"\nR={R/pc2cm:.2f} pc"
                     if cid in id_artists:
                         txt = id_artists[cid]
-                        txt.set_position((float(cx[0]), float(cy[0])))
-                        txt.set_text(label)
+                        txt.set_position((float(cx[0]), float(cy[0]))); txt.set_text(label)
                     else:
                         txt = ax.text(float(cx[0]), float(cy[0]), label, ha="center", va="center", **id_kwargs)
                         id_artists[cid] = txt
-
-            # remove rings for clouds not visible this frame
             for cid in list(ring_artists.keys()):
                 if cid not in visible_now:
-                    ring_artists[cid].remove()
-                    del ring_artists[cid]
+                    ring_artists[cid].remove(); del ring_artists[cid]
             for cid in list(id_artists.keys()):
                 if cid not in visible_now:
-                    id_artists[cid].remove()
-                    del id_artists[cid]
+                    id_artists[cid].remove(); del id_artists[cid]
 
-        # --- your existing frame update function; call overlay at the end ---
-        def update(frame_i: int):
-            # 1) compute t_s for this frame (exactly how you already do)
-            t_s = float(t_array[frame_i]) if (t_array is not None and frame_i < len(t_array)) else 0.0
+        def update(i: int):
+            d = np.load(os.path.join(snapshot_dir, frames[i]))
+            P = d["pos_cm"]; rho = d["rho"]
+            # lock FOV to the first frame by passing fov_cm
+            img, extent = self._column_map_from_points(P, rho, r_cell,
+                                                    axis=axis, nxy=nxy, fov_cm=fov_cm,
+                                                    sigma_fac=sigma_fac, kappa=kappa,
+                                                    to_NH=to_NH, mu_mass=mu_mass, mH=mH)
+            im.set_data(np.log10(img + 1e-99))
+            # keep extent fixed to extent0 for stable axes (omit next line if you want per-frame autos)
+            im.set_extent(extent0)
 
-            # 2) recompute column density image & update im.set_data(...), etc.
-            #    (your existing code here)
+            t_s = float(t_array[i]) if (t_array is not None and i < len(t_array)) else 0.0
+            title.set_text(f"t = {t_s/year2s/1e6:.2f} Myr")
 
-            # 3) draw/update cloud rings for this time
             _update_cloud_overlays(t_s)
+            return [im, title] + list(ring_artists.values()) + (list(id_artists.values()) if show_ids else [])
 
-            return []  # or [im] if you’re blitting the image
-
-        ani = animation.FuncAnimation(fig, update, frames=..., blit=False)
-        ani.save(outfile, writer="ffmpeg", fps=fps)
+        n_frames = len(frames)
+        ani = animation.FuncAnimation(fig, update, frames=n_frames, blit=False)
+        ani.save(os.path.join(snapshot_dir, outfile), writer="ffmpeg", fps=fps)
         plt.close(fig)
 
 
