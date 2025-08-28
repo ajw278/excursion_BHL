@@ -1,15 +1,16 @@
 # binary_unstructured_field.py  (extended)
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Callable, Dict, Any
 
-import os
+from dataclasses import dataclass, field, asdict
+import os, json, uuid
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import animation
 
 import generate_cloudrho0 as gcr
 from consts_defaults import year2s, pc2cm, Gcgs as G  # your constants
+
 
 print('Next steps: ADD RECURSIVE CLOUD GENERATION')
 
@@ -24,6 +25,28 @@ def _rand_in_ball(R: float, rng: np.random.Generator) -> np.ndarray:
     u = rng.random()
     return v * (R * (u ** (1.0 / 3.0)))
 
+@dataclass
+class CloudRecord:
+    cloud_id: str
+    level: int
+    grid_index: int
+    R0_cm: float
+    pos_cm: np.ndarray          # initial position at spawn  (3,)
+    v0_cms: np.ndarray          # constant velocity vector  (3,)
+    rho_init: float
+    t_init_s: float
+    baseline_args: Dict[str, Any]
+    baseline_info: Dict[str, Any] = field(default_factory=dict)
+    baseline_fn: Optional[Callable[[float], dict]] = None
+
+    # --- live / derived state (not required on disk) ---
+    pos_now_cm: Optional[np.ndarray] = None
+    t_now_s: Optional[float] = None
+
+    def position_at(self, t_seconds: float) -> np.ndarray:
+        dt = float(t_seconds) - float(self.t_init_s)
+        return np.asarray(self.pos_cm, float) + np.asarray(self.v0_cms, float) * dt
+
 
 @dataclass
 class LevelView:
@@ -31,6 +54,18 @@ class LevelView:
     n: int
     offset: int
     grid_index: int
+
+def _json_default(obj):
+    import numpy as np
+    # numpy scalars
+    if isinstance(obj, np.generic):
+        return obj.item()
+    # numpy arrays
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    # fall back: stringify the type (avoids crashes on complex objects like grids/functions)
+    return f"<{obj.__class__.__name__}>"
+
 
 
 class BinaryUnstructuredField:
@@ -112,6 +147,9 @@ class BinaryUnstructuredField:
         if self.evolve0d and self.start > 0:
             self._init_super_fields(n_super)
 
+
+        self.clouds: list[CloudRecord] = []
+
         # cache: repeated aggregations are common
         self._agg_cache: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
 
@@ -132,17 +170,15 @@ class BinaryUnstructuredField:
         return float(self.super_delta.sum()), self.super_delta_v.sum(axis=0)
 
 
-    # ---------- construction helpers ----------
     def _branch_loc_for_gridlevel(self, branch_idx, target_gi):
         """
-        branch_idx : 1D array of global node indices for this finest point's ancestors (coarse→fine)
-        target_gi  : integer grid level (the 'gi_first' for Lcut)
-        returns: integer ℓ such that branch_idx[ℓ] has grid_index == target_gi, or None
+        branch_idx : 1D array of global node indices along this node's ancestors (coarse→fine)
+        target_gi  : integer grid level (gi_first from Lcut)
+        returns: integer l such that branch_idx[l] maps to target_gi on this branch, else None
         """
-        gi_on_branch = self.grid_index[branch_idx]  # vector of grid-level ids along branch
+        gi_on_branch = self.grid_index[branch_idx]  # same length as branch_idx
         hits = np.where(gi_on_branch == int(target_gi))[0]
         return int(hits[0]) if hits.size else None
-
 
     def _find_end_grid_index(self, i_start: int, t_factor: float=1.0) -> Optional[int]:
         """Return the smallest i >= i_start with t_ff(rhocs[i]) < tau_R[i]."""
@@ -263,34 +299,230 @@ class BinaryUnstructuredField:
         self._agg_cache.clear()
 
     # ---------- densities & velocities ----------
-    def density_at_level(self, level: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray]:
-        if level is None:
-            level = len(self.levels) - 1
-        dsum, _ = self.field_at_level(level)
+    def density_at_level(self, level: int, t_seconds: float | None = None):
+        if t_seconds is None:
+            t_seconds = 0.0
+        sL = self.level_slice(level)
+        idxs = np.arange(sL.start, sL.stop)
+        gi_level = self.levels[level].grid_index
+        rho0_ref = float(self.grid.rho0)
+        mu_level = float(np.atleast_1d(self.grid.mu_lnrho)[gi_level]) if hasattr(self.grid, "mu_lnrho") else 0.0
 
-        # add 0-D supers (unfiltered in the non-collapse path)
-        s_super, _ = self._super_sums()
-        if s_super != 0.0:
-            dsum = dsum + float(s_super)
-
-        gi = self.levels[level].grid_index
-        rho0 = float(self.grid.rho0)
-        mu = float(np.atleast_1d(self.grid.mu_lnrho)[gi]) if hasattr(self.grid, "mu_lnrho") else 0.0
-        log_rho = mu + dsum
-        rho = rho0 * np.exp(log_rho)
+        log_rho = np.empty(idxs.size, float)
+        for k, jg in enumerate(idxs):
+            dsum, _ = self._sum_branch_collapsing_node(int(jg), t_seconds)
+            log_rho[k] = mu_level + dsum
+        rho = rho0_ref * np.exp(log_rho)
         return rho, log_rho
 
-    def velocity_at_level(self, level: Optional[int] = None) -> np.ndarray:
-        if level is None:
-            level = len(self.levels) - 1
-        _, vsum = self.field_at_level(level)
+    def velocity_at_level(self, level: int, t_seconds: float | None = None):
+        if t_seconds is None:
+            t_seconds = 0.0
+        sL = self.level_slice(level)
+        idxs = np.arange(sL.start, sL.stop)
 
-        # add 0-D supers (unfiltered in the non-collapse path)
-        _, v_super = self._super_sums()
-        if np.any(v_super):
-            vsum = vsum + v_super[None, :]
+        v = np.empty((idxs.size, 3), float)
+        for k, jg in enumerate(idxs):
+            _, vsum = self._sum_branch_collapsing_node(int(jg), t_seconds)
+            v[k, :] = vsum
+        return v
 
-        return vsum
+    
+
+    # --------- clouds ----------
+    def _cloud_radius_at(self, rec: CloudRecord, t_seconds: float) -> float:
+        """Return R_affect(t)=Lcut(t)/2 for a stored cloud record; NaN if unknown."""
+        if rec.baseline_fn is None:
+            return float("nan")
+        out = rec.baseline_fn(float(t_seconds)) or {}
+        Lcut = float(out.get("Lcut", np.nan))
+        return 0.5 * Lcut
+    
+    def _cloud_center_at(self, rec, t_seconds: float) -> np.ndarray:
+        """Ballistic center at time t."""
+        return rec.position_at(t_seconds)
+
+    def _cloud_baseline_at(self, rec, t_seconds: float):
+        """
+        Return (rho0_t, v0_t(3,), Lcut_t) for this cloud at global time t,
+        evaluating its baseline at (t - t_init).
+        """
+        if rec.baseline_fn is None:
+            return None, None, None
+        tau = float(t_seconds) - float(rec.t_init_s)
+        out = rec.baseline_fn(tau) or {}
+        rho0_t = float(out.get("rho0", np.nan))
+        v0_t   = np.asarray(out.get("v0", np.zeros(3, float)), float).reshape(3,)
+        Lcut_t = float(out.get("Lcut", np.nan))
+        return rho0_t, v0_t, Lcut_t
+
+    def _cloud_R_affect(self, rec, t_seconds: float) -> float:
+        """R_affect = Lcut/2 at time t for this cloud (time-shifted baseline)."""
+        _, _, Lcut_t = self._cloud_baseline_at(rec, t_seconds)
+        return 0.5 * float(Lcut_t) if np.isfinite(Lcut_t) else float("nan")
+
+    def _smallest_enclosing_cloud(self, pos_cm: np.ndarray, t_seconds: float):
+        """
+        Return (rec, R_affect_cm) for the smallest cloud whose sphere at time t contains pos_cm,
+        or (None, None) if none.
+        """
+        best = None
+        best_R = np.inf
+        for rec in getattr(self, "clouds", []):
+            c = self._cloud_center_at(rec, t_seconds)
+            R = self._cloud_R_affect(rec, t_seconds)
+            if not np.isfinite(R):
+                continue
+            if np.linalg.norm(pos_cm - c) <= R and R < best_R:
+                best, best_R = rec, R
+        return best, (best_R if np.isfinite(best_R) else None)
+
+
+    '''def _node_in_any_cloud(self, pos_cm: np.ndarray, t_seconds: float) -> bool:
+        """True if pos_cm lies inside any cloud's (moving) sphere of radius Lcut/2 at time t."""
+        if not hasattr(self, "clouds"):
+            return False
+        for rec in self.clouds:
+            # current center
+            c = rec.position_at(t_seconds)
+            # current influence radius
+            if rec.baseline_fn is None:
+                continue
+            out = rec.baseline_fn(float(t_seconds)) or {}
+            Lcut = float(out.get("Lcut", np.nan))
+            R = 0.5 * Lcut
+            if np.isfinite(R) and np.linalg.norm(pos_cm - c) <= R:
+                return True
+        return False'''
+
+    def _save_cloud_db(self, snapshot_dir: str):
+        path = os.path.join(snapshot_dir, "cloud_db.jsonl")
+        with open(path, "w") as f:
+            for rec in self.clouds:
+                # re-derive now if not set
+                pos_now = rec.pos_now_cm if rec.pos_now_cm is not None else rec.position_at(rec.t_now_s or rec.t_init_s)
+                item = {
+                    "cloud_id": rec.cloud_id,
+                    "level": int(rec.level),
+                    "grid_index": int(rec.grid_index),
+                    "R0_cm": float(rec.R0_cm),
+                    "pos_cm_init": [float(x) for x in rec.pos_cm],
+                    "pos_cm_now":  [float(x) for x in pos_now],
+                    "v0_cms": [float(x) for x in rec.v0_cms],
+                    "rho_init": float(rec.rho_init),
+                    "t_init_s": float(rec.t_init_s),
+                    "t_now_s":   float(rec.t_now_s if rec.t_now_s is not None else rec.t_init_s),
+                    "baseline_args": rec.baseline_args,
+                    "baseline_info": rec.baseline_info,
+                }
+                f.write(json.dumps(item, default=_json_default) + "\n")
+
+
+    
+    def update_cloud_positions(self, t_seconds: float, *, snapshot_dir: Optional[str] = None, save_state: bool = True):
+        """
+        Ballistic update for all clouds: x(t)=x0+v0*(t-t_init).
+        Optionally persists a compact state file per snapshot.
+        """
+        if not hasattr(self, "clouds") or len(self.clouds) == 0:
+            return
+
+        # update in-memory
+        for rec in self.clouds:
+            rec.pos_now_cm = rec.position_at(t_seconds)
+            rec.t_now_s = float(t_seconds)
+
+        # optionally persist a light-weight state blob for this time
+        if save_state and snapshot_dir:
+            ids   = [rec.cloud_id for rec in self.clouds]
+            level = np.array([rec.level for rec in self.clouds], dtype=np.int32)
+            gidx  = np.array([rec.grid_index for rec in self.clouds], dtype=np.int32)
+            Xnow  = np.stack([rec.pos_now_cm if rec.pos_now_cm is not None else rec.position_at(t_seconds)
+                            for rec in self.clouds], axis=0)
+            V0    = np.stack([rec.v0_cms for rec in self.clouds], axis=0)
+            # optional: current influence radius = Lcut/2 from each cloud’s baseline
+            R_aff = []
+            for rec in self.clouds:
+                if rec.baseline_fn is None:
+                    R_aff.append(np.nan)
+                else:
+                    out = rec.baseline_fn(float(t_seconds)) or {}
+                    Lcut = float(out.get("Lcut", np.nan))
+                    R_aff.append(0.5 * Lcut)
+            R_aff = np.asarray(R_aff, float)
+
+            # name state by time (or let caller pass an index)
+            fname = f"cloud_state_t{int(round(t_seconds)):012d}.npz"
+            path  = os.path.join(snapshot_dir, fname)
+            np.savez_compressed(path,
+                                ids=np.array(ids, dtype=object),
+                                level=level, grid_index=gidx,
+                                pos_now_cm=Xnow, v0_cms=V0,
+                                R_affect_cm=R_aff,
+                                t_seconds=float(t_seconds))
+
+
+    def check_and_spawn_clouds(self, t_seconds: float, levels: Optional[list[int]] = None, verbose: bool = False):
+        """
+        Scan levels from largest→smallest; if ρ(node) > ρ_crit(level) and node is not
+        inside an existing cloud, spawn a new cloud at that node.
+        """
+        if levels is None:
+            levels = list(range(len(self.levels)))  # 0 .. L-1  (0 is largest scale)
+
+        for level in levels:
+            gi = int(self.levels[level].grid_index)
+            rho_crit = float(self.grid.rhocs[gi])
+
+            # evaluate field at this level (our earlier general API)
+            rho, _ = self.density_at_level(level, t_seconds=t_seconds)    # (N_level,)
+            v   = self.velocity_at_level(level, t_seconds=t_seconds)      # (N_level,3)
+            sL  = self.level_slice(level)
+            P   = self.pos[sL]                                            # (N_level,3)
+
+            unstable_idx = np.nonzero(rho > rho_crit)[0]
+            if unstable_idx.size == 0:
+                continue
+
+            # iterate nodes; skip those already inside any existing cloud at t_seconds
+            for k in unstable_idx:
+                pos_k = P[k]
+                rec_hit, _ = self._smallest_enclosing_cloud(pos_k, t_seconds)
+                if rec_hit is not None:
+                    continue 
+
+                # spawn new cloud
+                R0_cm = 0.5 * float(self.grid.rlevels[gi])   # radius = 1/2 the collapse scale
+                v0    = np.asarray(v[k], float)
+                rho0  = rho_crit
+
+                baseline_fn = None
+                info = {}
+                if gcr is not None and hasattr(gcr, "build_cloud_baseline_fn"):
+                    try:
+                        baseline_fn, info = gcr.build_cloud_baseline_fn(target_radius_cm=R0_cm)
+                    except Exception:
+                        pass
+
+                rec = CloudRecord(
+                    cloud_id=str(uuid.uuid4()),
+                    level=int(level),
+                    grid_index=gi,
+                    R0_cm=float(R0_cm),
+                    pos_cm=np.asarray(pos_k, float),
+                    v0_cms=v0,
+                    rho_init=float(rho0),
+                    t_init_s=float(t_seconds),
+                    baseline_args={"target_radius_cm": float(R0_cm)},
+                    baseline_info=info,
+                    baseline_fn=baseline_fn
+                )
+                self.clouds.append(rec)
+
+                if verbose:
+                    pc2cm = 3.086e18
+                    print(f"[spawn] t={t_seconds/3.154e13:.3f} Myr  level={level}  "
+                        f"R0={R0_cm/pc2cm:.3f} pc  rho_c={rho_crit:.3e}  id={rec.cloud_id}")
 
 
     # ---------- OU time stepping ----------
@@ -404,10 +636,14 @@ class BinaryUnstructuredField:
         while t < Tend_s:
             dt = min(dt_s, Tend_s - t)
             self.step(dt)
+            self.update_cloud_positions(t, snapshot_dir=snapshot_dir, save_state=True)
+            self.check_and_spawn_clouds(t_seconds=t, verbose=False)
+
             t += dt
 
             if t + 1e-12 >= next_snap:
                 self.save_snapshot(t, snapshot_dir, percent_clip=percent_clip, frame_idx=frame)
+                self._save_cloud_db(snapshot_dir)
                 frame += 1
                 next_snap += dt_snap_s
                 if verbose:
@@ -434,7 +670,7 @@ class BinaryUnstructuredField:
                 return gi
         return None
 
-    def _sum_branch_collapsing(self, j_finest: int, t_seconds: float):
+    '''def _sum_branch_collapsing(self, j_finest: int, t_seconds: float):
         # --- Baseline & geometry ---
         rho0_t, v0_t, Lcut_t = self._get_baseline(t_seconds)
         R_affect = 0.5 * float(Lcut_t)   # radius of influence
@@ -496,72 +732,93 @@ class BinaryUnstructuredField:
         # Finer-than-cloud contributions are left as drawn (they add substructure)
         dsum = float(Dd.sum()) + s_super
         vsum = Dv.sum(axis=0) + v_super
+        return dsum, vsum'''
+    
+    def _sum_branch_collapsing_node(self, node_global_idx: int, t_seconds: float):
+        """
+        Collapse-aware sum for an arbitrary node, treating this node as if it were 'finest' for the call.
+        Picks the smallest enclosing cloud at time t (if any) and applies filtering with that cloud's
+        time-shifted baseline. Super-scales are always added.
+        Returns (dsum, vsum) of increments over the node's branch + super.
+        """
+        # branch and position of this node
+        node_global_idx = int(node_global_idx)
+        branch = self.ancestors(node_global_idx)                  # coarse → fine global node indices
+        pos_node = self.pos[node_global_idx]
+
+        # Unconditional super sums
+        s_super = float(self.super_delta.sum()) if (getattr(self, "evolve0d", False) and self.super_grid_indices.size) else 0.0
+        v_super = self.super_delta_v.sum(axis=0) if (getattr(self, "evolve0d", False) and self.super_grid_indices.size) else np.zeros(3, float)
+
+        # Identify the smallest enclosing cloud at time t
+        cloud_rec, R_aff = self._smallest_enclosing_cloud(pos_node, t_seconds)
+        if cloud_rec is None:
+            # OUTSIDE any cloud → plain OU grid + super
+            dsum = float(self.delta[branch].sum()) + s_super
+            vsum = self.delta_v[branch, :].sum(axis=0) + v_super
+            return dsum, vsum
+
+        # Cloud baseline at (t - t_init)
+        rho0_t, v0_t, Lcut_t = self._cloud_baseline_at(cloud_rec, t_seconds)
+        if not np.isfinite(Lcut_t) or not np.isfinite(rho0_t):
+            # fallback: treat as outside if baseline is invalid
+            dsum = float(self.delta[branch].sum()) + s_super
+            vsum = self.delta_v[branch, :].sum(axis=0) + v_super
+            return dsum, vsum
+
+        # Find the first active grid index gi_first for this cloud scale
+        gi_first = self._grid_index_first_active(Lcut_t)
+        if gi_first is None:
+            # nothing active on grid → only super contributes
+            return float(s_super), v_super
+
+        # Map that grid level onto THIS branch
+        l_first = self._branch_loc_for_gridlevel(branch, gi_first)
+        if l_first is None:
+            # This branch doesn't include the cloud scale (node is coarser than cloud).
+            # With "treat this node as finest", we cannot pin a level that isn't present → only super stays.
+            return float(s_super), v_super
+
+        # Copies (do not mutate state)
+        Dd = np.array([ self.delta[idx]   for idx in branch ], float)
+        Dv = np.array([ self.delta_v[idx] for idx in branch ], float)
+
+        # Zero out contributions from coarser-than-cloud along this branch
+        if l_first > 0:
+            Dd[:l_first] = 0.0
+            Dv[:l_first] = 0.0
+
+        # Pin the first active grid level so TOTAL (grid + super) at cloud scale matches the cloud baseline
+        rho_ref = float(self.grid.rho0)
+        mu_ifirst = float(np.atleast_1d(self.grid.mu_lnrho)[gi_first]) if hasattr(self.grid, "mu_lnrho") else 0.0
+        delta_target_total = np.log(rho0_t / rho_ref) - mu_ifirst
+        Dd[l_first] = delta_target_total - s_super     # subtract super; it's added below
+        Dv[l_first] = np.asarray(v0_t, float) - v_super
+
+        # Sum (grid + super)
+        dsum = float(Dd.sum()) + s_super
+        vsum = Dv.sum(axis=0) + v_super
         return dsum, vsum
 
-    def density_at_finest(self, t_seconds: Optional[float] = None):
-        level = len(self.levels) - 1
-        gi = self.levels[level].grid_index
-        rho0_ref = float(self.grid.rho0)
-        mu = float(np.atleast_1d(self.grid.mu_lnrho)[gi]) if hasattr(self.grid, "mu_lnrho") else 0.0
 
-        s = self.level_slice(level)
-        N = s.stop - s.start
+    def density_at_finest(self, t_seconds: float | None = None):
+        return self.density_at_level(level=len(self.levels)-1, t_seconds=t_seconds)
 
-        if not self.collapse:
-            # fall back to non-collapse path but still include 0-D supers (already handled there)
-            dsum, _ = self.field_at_level(level)
-            s_super, _ = self._super_sums()
-            log_rho = mu + (dsum + s_super)
-            rho = rho0_ref * np.exp(log_rho)
-            return rho, log_rho
-
-        if t_seconds is None:
-            t_seconds = 0.0
-
-        log_rho = np.empty(N, float)
-        for j in range(N):
-            dsum, _ = self._sum_branch_collapsing(j, t_seconds)
-            log_rho[j] = mu + dsum
-        rho = rho0_ref * np.exp(log_rho)
-        return rho, log_rho
-
-    def velocity_at_finest(self, t_seconds: Optional[float] = None):
-        level = len(self.levels) - 1
-        s = self.level_slice(level)
-        N = s.stop - s.start
-
-        if not self.collapse:
-            _, v = self.field_at_level(level)
-            _, v_super = self._super_sums()
-            if np.any(v_super):
-                v = v + v_super[None, :]
-            return v
-
-        if t_seconds is None:
-            t_seconds = 0.0
-
-        v = np.empty((N, 3), float)
-        for j in range(N):
-            _, vsum = self._sum_branch_collapsing(j, t_seconds)
-            v[j] = vsum
-        return v
+    def velocity_at_finest(self, t_seconds: float | None = None):
+        return self.velocity_at_level(level=len(self.levels)-1, t_seconds=t_seconds)
 
     # ---------- visualization (video) ----------
-
-    def _project_xy(self, P, axis="z"):
+    
+    def _project_xy(self, X: np.ndarray, axis: str = "z"):
         """
-        Return 2D coords (X, Y) by dropping the chosen LOS axis.
-        axis ∈ {"x","y","z"} means LOS is that axis.
+        Project 3D coords X:(N,3) to 2D for the chosen LOS axis.
+        axis='z' -> (x,y); 'x'->(y,z); 'y'->(x,z)
         """
-        P = np.asarray(P, float)
-        if axis == "z":
-            return P[:, 0], P[:, 1]
-        elif axis == "y":
-            return P[:, 0], P[:, 2]
-        elif axis == "x":
-            return P[:, 1], P[:, 2]
-        else:
-            raise ValueError("axis must be 'x', 'y', or 'z'")
+        X = np.asarray(X, float)
+        if axis == "z":  return X[:, 0], X[:, 1]
+        if axis == "x":  return X[:, 1], X[:, 2]
+        if axis == "y":  return X[:, 0], X[:, 2]
+        raise ValueError("axis must be 'x','y','z'")
 
     def _column_map_from_points(self,
                             P_cm, rho, r_cell_cm,
@@ -736,41 +993,98 @@ class BinaryUnstructuredField:
         title = ax.set_title("")
 
         # Optional overlay: projected cloud radius
-        ring = None
-        def _lcut(t_seconds):
-            if not (show_cloud_radius and getattr(self, "collapse", False) and callable(self.baseline_fn)):
-                return None
-            out = self.baseline_fn(float(t_seconds)) or {}
-            return float(out.get("Lcut", np.nan))
+        ring_kwargs = dict(ec="cyan", lw=1.4, fill=False, alpha=0.9) if ring_kwargs is None else ring_kwargs
+        id_kwargs   = dict(color="cyan", fontsize=8) if id_kwargs is None else id_kwargs
 
-        def update(k):
-            nonlocal ring
-            d = np.load(os.path.join(snapshot_dir, frames[k]))
-            P = d["pos_cm"]; rho = d["rho"]; t_s = float(d["t_seconds"][0])
-            img, _ = self._column_map_from_points(P, rho, r_cell,
-                                                axis=axis, nxy=nxy, fov_cm=fov_cm,
-                                                sigma_fac=sigma_fac, kappa=kappa,
-                                                to_NH=to_NH, mu_mass=mu_mass, mH=mH)
-            im.set_data(np.log10(img + 1e-99))
-            title.set_text(f"t = {t_s/3.154e7/1e6:.3f} Myr")
+        # --- load your frames & times as you already do ---
+        times_path = os.path.join(snapshot_dir, "snapshot_times.npy")
+        t_array = np.load(times_path) if os.path.exists(times_path) else None
 
-            # overlay cloud radius (circle on the plane)
-            if ring is not None:
-                try: ring.remove()
-                except Exception: pass
-                ring = None
-            R = _lcut(t_s)/2.
-            if np.isfinite(R):
-                # circle at root_pos projected
-                x0, y0 = self._project_xy(self.root_pos[None,:], axis=axis)
-                circ = plt.Circle((x0[0], y0[0]), R, fill=False, color="white", alpha=0.5, linewidth=1.0)
-                ring = ax.add_patch(circ)
-            return im, title
+        # build first frame image (your current code)... and capture `extent`
+        fig, ax = plt.subplots(figsize=(7.0, 6.0))
+        # im = ax.imshow(first_frame, extent=extent, origin="lower", ... )
+        ax.set_aspect("equal")  # IMPORTANT so circles look right
 
-        ani = animation.FuncAnimation(fig, update, frames=len(frames), blit=False)
-        ani.save(os.path.join(snapshot_dir, outfile), writer="ffmpeg", fps=fps)
+        # --- ring artist cache so we update instead of recreating each frame ---
+        ring_artists: dict[str, Circle] = {}
+        id_artists: dict[str, any] = {}
+
+        def _update_cloud_overlays(t_s: float):
+            """Create/update/remove one ring (and optional id label) per cloud that exists at time t_s."""
+            if not draw_cloud_rings or not hasattr(self, "clouds") or len(self.clouds) == 0:
+                # clear any leftovers
+                for c in list(ring_artists.values()):
+                    c.remove()
+                ring_artists.clear()
+                for txt in list(id_artists.values()):
+                    txt.remove()
+                id_artists.clear()
+                return
+
+            visible_now = set()
+
+            # loop all clouds; draw those that have formed and have finite radius
+            for rec in self.clouds:
+                if t_s < float(rec.t_init_s):
+                    continue  # not formed yet
+
+                # center & radius at this global time
+                C3 = self._cloud_center_at(rec, t_s)
+                R  = self._cloud_R_affect(rec, t_s)
+                if not np.isfinite(R) or R <= 0.0:
+                    continue
+
+                cx, cy = self._project_xy(C3[None, :], axis=axis)
+                cid = rec.cloud_id
+                visible_now.add(cid)
+
+                if cid in ring_artists:
+                    # move + resize
+                    r = ring_artists[cid]
+                    r.center = (float(cx[0]), float(cy[0]))
+                    r.set_radius(float(R))
+                else:
+                    # create
+                    r = Circle((float(cx[0]), float(cy[0])), float(R), **ring_kwargs)
+                    ax.add_patch(r)
+                    ring_artists[cid] = r
+
+                if show_ids:
+                    label = f"{cid[:6]}"
+                    if cid in id_artists:
+                        txt = id_artists[cid]
+                        txt.set_position((float(cx[0]), float(cy[0])))
+                        txt.set_text(label)
+                    else:
+                        txt = ax.text(float(cx[0]), float(cy[0]), label, ha="center", va="center", **id_kwargs)
+                        id_artists[cid] = txt
+
+            # remove rings for clouds not visible this frame
+            for cid in list(ring_artists.keys()):
+                if cid not in visible_now:
+                    ring_artists[cid].remove()
+                    del ring_artists[cid]
+            for cid in list(id_artists.keys()):
+                if cid not in visible_now:
+                    id_artists[cid].remove()
+                    del id_artists[cid]
+
+        # --- your existing frame update function; call overlay at the end ---
+        def update(frame_i: int):
+            # 1) compute t_s for this frame (exactly how you already do)
+            t_s = float(t_array[frame_i]) if (t_array is not None and frame_i < len(t_array)) else 0.0
+
+            # 2) recompute column density image & update im.set_data(...), etc.
+            #    (your existing code here)
+
+            # 3) draw/update cloud rings for this time
+            _update_cloud_overlays(t_s)
+
+            return []  # or [im] if you’re blitting the image
+
+        ani = animation.FuncAnimation(fig, update, frames=..., blit=False)
+        ani.save(outfile, writer="ffmpeg", fps=fps)
         plt.close(fig)
-
 
 
     def make_video(
